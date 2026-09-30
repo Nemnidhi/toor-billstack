@@ -370,3 +370,56 @@ test("dashboard actions render the relevant invoice flow and invoice editor avoi
   assert.match(styles, /:root\[data-theme="light"\] \.text-white\.bg-brand-600/);
   assert.doesNotMatch(invoicePage, /No contact details recorded/);
 });
+
+const vm = require('node:vm');
+async function runSeedFixture(mode) {
+  const script = fs.readFileSync(path.join(__dirname, '../src/scripts/seed.js'), 'utf8');
+  const calls = { profile: 0, subscriptions: 0, customers: 0, suppliers: 0, products: 0 };
+  let business;
+  const create = field => async value => { calls[field]++; return value; };
+  const stubs = {
+    '../config/load-env': () => {}, '../config/db': async () => {},
+    '../models/Business': { deleteMany: async () => {}, create: async data => (business = { _id: 'local-business', deploymentMode: 'SAAS', ...data, save: async () => {} }) },
+    '../models/User': { deleteMany: async () => {}, create: async data => ({ _id: 'local-user', ...data }) },
+    '../models/BusinessSubscription': { create: create('subscriptions') },
+    '../models/Customer': { create: create('customers') },
+    '../models/Supplier': { create: create('suppliers') },
+    '../models/Product': { insertMany: create('products') },
+    '../services/auth.service': { hashPassword: async () => 'test-hash' },
+    '../constants/modules': { getDeploymentMode: () => mode, DEPLOYMENT_MODES: { SELF_HOSTED: 'SELF_HOSTED' } },
+    '../services/self-hosted-profile.service': { ensureSelfHostedBusinessProfile: async row => { assert.equal(row, business); assert.equal(row.deploymentMode, 'SELF_HOSTED'); calls.profile++; } },
+  };
+  await new Promise((resolve, reject) => vm.runInNewContext(script, {
+    require: name => { assert.ok(name in stubs, name); return stubs[name]; },
+    console: { log() {}, error: (...args) => reject(new Error(args.map(String).join(' '))) },
+    process: { exit: code => code === 0 ? resolve() : reject(new Error('Seed failed')) },
+  }));
+  return { business, calls };
+}
+
+test('SELF_HOSTED seed persists client mode and initializes Real Estate without SaaS/retail fixtures', async () => {
+  const { business, calls } = await runSeedFixture('SELF_HOSTED');
+  assert.equal(business.deploymentMode, 'SELF_HOSTED');
+  assert.equal(business.name, 'THE OFFICE ON RENT');
+  assert.equal(business.industry, 'Real Estate');
+  assert.deepEqual(calls, { profile: 1, subscriptions: 0, customers: 0, suppliers: 0, products: 0 });
+});
+
+test('legacy SaaS demo behavior remains explicit rather than leaking into self-hosted seeding', async () => {
+  const { business, calls } = await runSeedFixture('SAAS');
+  assert.equal(business.deploymentMode, 'SAAS');
+  assert.deepEqual(calls, { profile: 0, subscriptions: 1, customers: 1, suppliers: 1, products: 1 });
+});
+
+test('Real Estate backend module defaults preserve the observed live client boundary', () => {
+  const { resolveWorkspacePreset, moduleCatalog, _private } = require('../src/services/module.service');
+  const { getSelfHostedDefaultProfilePayload } = require('../src/services/self-hosted-profile.service');
+  const resolved = resolveWorkspacePreset(getSelfHostedDefaultProfilePayload());
+  const business = { deploymentMode: 'SELF_HOSTED', businessProfile: { onboardingStatus: 'COMPLETED', recommendedModules: resolved.recommendedModules } };
+  for (const key of ['customers','invoices','payments','ledger','gst','reports','quotations','recurring_billing','expenses','communications','products_services','credit_notes','team']) {
+    assert.equal(_private.resolveDefaultModuleState({ business, moduleMeta: moduleCatalog.find(x => x.key === key) }), 'ACTIVE', key);
+  }
+  for (const key of ['inventory','suppliers','purchases','sales_returns','hr']) {
+    assert.equal(_private.resolveDefaultModuleState({ business, moduleMeta: moduleCatalog.find(x => x.key === key) }), 'AVAILABLE', key);
+  }
+});

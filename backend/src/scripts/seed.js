@@ -8,10 +8,14 @@ const Product = require("../models/Product");
 const Supplier = require("../models/Supplier");
 const User = require("../models/User");
 const { hashPassword } = require("../services/auth.service");
+const { getDeploymentMode, DEPLOYMENT_MODES } = require("../constants/modules");
+const { ensureSelfHostedBusinessProfile } = require("../services/self-hosted-profile.service");
 
 const seed = async () => {
   await connectDB();
 
+  const deploymentMode = getDeploymentMode();
+  const selfHosted = deploymentMode === DEPLOYMENT_MODES.SELF_HOSTED;
   const slug = "billstack-demo";
   await Promise.all([
     Business.deleteMany({ slug }),
@@ -19,9 +23,10 @@ const seed = async () => {
   ]);
 
   const business = await Business.create({
-    name: "BillStack Demo Pvt Ltd",
+    name: selfHosted ? "THE OFFICE ON RENT" : "BillStack Demo Pvt Ltd",
     slug,
-    industry: "Retail",
+    deploymentMode,
+    industry: selfHosted ? "Real Estate" : "Retail",
     email: "hello@billstack.demo",
     billingEmail: "billing@billstack.demo",
     phone: "+91 9876543210",
@@ -60,6 +65,14 @@ const seed = async () => {
 
   business.ownerUserId = owner._id;
   await business.save();
+
+  // Self-hosted demos use the same persisted profile/module defaults as login.
+  // Do not populate a retail/SaaS subscription workspace in the client edition.
+  if (selfHosted) {
+    await ensureSelfHostedBusinessProfile(business);
+    console.log("Self-hosted Real Estate demo workspace initialized");
+    return;
+  }
 
   await BusinessSubscription.create({
     businessId: business._id,
