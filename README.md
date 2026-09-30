@@ -1,5 +1,9 @@
 # BillStack
 
+This is the canonical self-hosted BillStack client repository for The Office On Rent: `Nemnidhi/toor-billstack`. Continue client development here, not in the SaaS repository or the superseded `billstack-toor` copy. The complete verified client Git history is preserved.
+
+See [local client setup](docs/TOOR-Local-Setup.md) for the minimal local configuration and verification commands.
+
 BillStack is a multi-tenant MERN SaaS billing platform with authentication, subscriptions, inventory, purchases, invoices, PDF sharing, analytics, and a platform-level super admin panel.
 
 ## Folder Structure
