@@ -224,3 +224,15 @@ test("Payment and PaymentAllocation models remain immutable after refactor", () 
   const allocationPreHooks = PaymentAllocation.schema.s.hooks._pres.get("updateOne");
   assert.ok(allocationPreHooks && allocationPreHooks.length > 0, "PaymentAllocation model must still block updateOne");
 });
+
+
+// ---------------------------------------------------------------------------
+// 4b. PaymentBalance.findOneAndUpdate is used for database-level payment serialization
+// ---------------------------------------------------------------------------
+test("allocatePayment uses PaymentBalance.findOneAndUpdate with allocatedMinor conditional for payment budget serialization", () => {
+  const src = require("fs").readFileSync(require.resolve("../src/services/payment.service"), "utf8");
+
+  assert.ok(src.includes("PaymentBalance.findOneAndUpdate"), "Must use PaymentBalance.findOneAndUpdate for atomic payment serialization");
+  assert.ok(src.includes("allocatedMinor: { $lte:"), "Must check allocatedMinor <= limit atomically in query");
+  assert.ok(src.includes("allocatedMinor: amountMinor"), "Must atomically increment allocatedMinor");
+});

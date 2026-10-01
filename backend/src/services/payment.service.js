@@ -3,6 +3,7 @@ const Customer = require("../models/Customer");
 const Invoice = require("../models/Invoice");
 const Payment = require("../models/Payment");
 const PaymentAllocation = require("../models/PaymentAllocation");
+const PaymentBalance = require("../models/PaymentBalance");
 const Purchase = require("../models/Purchase");
 const Supplier = require("../models/Supplier");
 const CustomerLedger = require("../models/CustomerLedger");
@@ -47,6 +48,33 @@ const validateAllocationCounterparty = ({ sourceType, document, payment }) => {
   return true;
 };
 
+
+const ensurePaymentBalance = async ({ businessId, payment, session }) => {
+  let balance = await PaymentBalance.findOne({ _id: payment._id, businessId }).session(session);
+  if (!balance) {
+    const allocatedMinor = await netPaymentAllocations({ businessId, paymentId: payment._id, session });
+    try {
+      [balance] = await PaymentBalance.create(
+        [{
+          _id: payment._id,
+          paymentId: payment._id,
+          businessId,
+          totalMinor: toMinorUnits(payment.amount),
+          allocatedMinor,
+        }],
+        { session }
+      );
+    } catch (err) {
+      if (err.code === 11000) {
+        balance = await PaymentBalance.findOne({ _id: payment._id, businessId }).session(session);
+      } else {
+        throw err;
+      }
+    }
+  }
+  return balance;
+};
+
 const validateReversalRequest = ({ allocationAmount, alreadyReversed, requestedAmount }) => {
   if (alreadyReversed) throw new AppError("This allocation has already been reversed", 409);
   const requested = fromMinorUnits(toMinorUnits(requestedAmount || allocationAmount, "Reversal amount"));
@@ -77,6 +105,16 @@ const createPayment = async ({ businessId, userId, payload }) => {
       if (payload.customerId && !(await Customer.findOne({ _id: payload.customerId, businessId }).session(session))) throw new AppError("Customer not found", 404);
       if (payload.supplierId && !(await Supplier.findOne({ _id: payload.supplierId, businessId }).session(session))) throw new AppError("Supplier not found", 404);
       [payment] = await Payment.create([{ businessId, direction, amount, currency: payload.currency || "INR", paymentDate: payload.paymentDate ? new Date(payload.paymentDate) : new Date(), paymentMethod: payload.paymentMethod || "OTHER", referenceNumber: payload.referenceNumber || "", idempotencyKey, customerId: payload.customerId || null, supplierId: payload.supplierId || null, notes: payload.notes || "", createdBy: userId }], { session });
+      await PaymentBalance.create(
+        [{
+          _id: payment._id,
+          paymentId: payment._id,
+          businessId,
+          totalMinor: toMinorUnits(amount),
+          allocatedMinor: 0,
+        }],
+        { session }
+      );
     });
     return payment;
   } catch (error) {
@@ -119,11 +157,25 @@ const allocatePayment = async ({ businessId, userId, paymentId, payload }) => {
   try {
     let allocation;
     await session.withTransaction(async () => {
-      // --- validate payment budget (inside transaction for consistent read) ---
+      // --- validate payment budget via atomic PaymentBalance serialization gate ---
       const payment = await Payment.findOne({ _id: paymentId, businessId, status: "POSTED" }).session(session);
       if (!payment) throw new AppError("Payment not found", 404);
-      const usedMinor = await netPaymentAllocations({ businessId, paymentId: payment._id, session });
-      if (toMinorUnits(payment.amount) - usedMinor < amountMinor) {
+
+      // Atomic conditional update on PaymentBalance serializes concurrent allocations across any invoices/processes
+      await ensurePaymentBalance({ businessId, payment, session });
+      const updatedPaymentBalance = await PaymentBalance.findOneAndUpdate(
+        {
+          _id: payment._id,
+          businessId,
+          allocatedMinor: { $lte: toMinorUnits(payment.amount) - amountMinor },
+        },
+        {
+          $inc: { allocatedMinor: amountMinor },
+        },
+        { session, new: true }
+      );
+
+      if (!updatedPaymentBalance) {
         throw new AppError("Allocation exceeds available payment amount", 400);
       }
 
@@ -342,6 +394,16 @@ const reversePayment = async ({ businessId, userId, paymentId, reason = "" }) =>
         [{ businessId, direction: counterDirection, amount: payment.amount, currency: payment.currency || "INR", paymentDate: new Date(), paymentMethod: payment.paymentMethod || "OTHER", referenceNumber: "REFUND:" + (payment.referenceNumber || payment._id), customerId: payment.customerId || null, supplierId: payment.supplierId || null, reversalOfPaymentId: payment._id, notes, createdBy: userId }],
         { session }
       );
+      await PaymentBalance.create(
+        [{
+          _id: reversal._id,
+          paymentId: reversal._id,
+          businessId,
+          totalMinor: toMinorUnits(payment.amount),
+          allocatedMinor: 0,
+        }],
+        { session }
+      );
       if (payment.customerId) {
         await createCustomerLedgerEntryOnce({ businessId, customerId: payment.customerId, eventType: "REFUND", amount: payment.amount, direction: "DEBIT", paymentId: reversal._id, sourceKey: "PAYMENT_REVERSAL:" + reversal._id, notes, createdBy: userId }, { session });
       } else if (payment.supplierId) {
@@ -400,6 +462,12 @@ const reverseAllocation = async ({ businessId, userId, allocationId, amount, rea
       const prior = await PaymentAllocationReversal.findOne({ allocationId, businessId }).session(session);
       const requested = validateReversalRequest({ allocationAmount: allocation.allocatedAmount, alreadyReversed: Boolean(prior), requestedAmount: amount });
       [reversal] = await PaymentAllocationReversal.create([{ businessId, allocationId, amount: requested, reason, createdBy: userId }], { session });
+      await ensurePaymentBalance({ businessId, payment, session });
+      await PaymentBalance.findOneAndUpdate(
+        { _id: payment._id, businessId },
+        { $inc: { allocatedMinor: -toMinorUnits(requested) } },
+        { session }
+      );
       if (allocation.invoiceId) {
         const invoice = await Invoice.findOne({ _id: allocation.invoiceId, businessId }).session(session);
         if (invoice) {
