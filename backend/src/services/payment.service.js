@@ -14,6 +14,40 @@ const { log } = require("../utils/logger");
 const { dispatchPaymentRecordedAutomation } = require("./communication.service");
 const { createCustomerLedgerEntryOnce, createSupplierLedgerEntryOnce } = require("./ledger.service");
 
+const paymentLocks = new Map();
+const withPaymentLock = async (paymentId, fn) => {
+  const key = String(paymentId);
+  while (paymentLocks.has(key)) {
+    await paymentLocks.get(key);
+  }
+  let resolve;
+  const p = new Promise((r) => { resolve = r; });
+  paymentLocks.set(key, p);
+  try {
+    return await fn();
+  } finally {
+    paymentLocks.delete(key);
+    resolve();
+  }
+};
+
+const documentLocks = new Map();
+const withDocumentLock = async (docId, fn) => {
+  const key = String(docId);
+  while (documentLocks.has(key)) {
+    await documentLocks.get(key);
+  }
+  let resolve;
+  const p = new Promise((r) => { resolve = r; });
+  documentLocks.set(key, p);
+  try {
+    return await fn();
+  } finally {
+    documentLocks.delete(key);
+    resolve();
+  }
+};
+
 const netDocumentAllocations = async ({ businessId, documentKey, documentId, session }) => {
   const allocations = await PaymentAllocation.find({ businessId, [documentKey]: documentId }).session(session).select("_id allocatedAmount");
   const reversals = await PaymentAllocationReversal.find({ businessId, allocationId: { $in: allocations.map((row) => row._id) } }).session(session).select("allocationId amount");
@@ -80,6 +114,7 @@ const allocatePayment = async ({ businessId, userId, paymentId, payload }) => {
   const invoiceId = payload.invoiceId || null; const purchaseId = payload.purchaseId || null;
   if (Boolean(invoiceId) === Boolean(purchaseId)) throw new AppError("Allocate to exactly one invoice or purchase", 400);
   const amount = fromMinorUnits(toMinorUnits(payload.allocatedAmount, "Allocated amount"));
+  return withPaymentLock(paymentId, () => withDocumentLock(invoiceId || purchaseId, async () => {
   const session = await mongoose.startSession();
   try {
     let allocation;
@@ -92,6 +127,7 @@ const allocatePayment = async ({ businessId, userId, paymentId, payload }) => {
         if (payment.direction !== "RECEIVED") throw new AppError("Only received payments can be allocated to invoices", 400);
         const invoice = await Invoice.findOne({ _id: invoiceId, businessId, status: { $ne: "cancelled" } }).session(session);
         if (!invoice) throw new AppError("Invoice not found", 404);
+        if (payment.businessId.toString() !== invoice.businessId.toString()) throw new AppError("Cross-entity allocation is not permitted: payment and invoice belong to different billing entities", 403);
         if (!payment.customerId || payment.customerId.toString() !== invoice.customerId.toString()) throw new AppError("Payment customer does not match invoice customer", 400);
         if (await PaymentAllocation.findOne({ paymentId: payment._id, invoiceId: invoice._id }).session(session)) throw new AppError("This payment is already allocated to the invoice", 409);
         const allocated = await netDocumentAllocations({ businessId, documentKey: "invoiceId", documentId: invoice._id, session });
@@ -109,6 +145,7 @@ const allocatePayment = async ({ businessId, userId, paymentId, payload }) => {
         if (payment.direction !== "PAID") throw new AppError("Only paid payments can be allocated to purchases", 400);
         const purchase = await Purchase.findOne({ _id: purchaseId, businessId }).session(session);
         if (!purchase) throw new AppError("Purchase not found", 404);
+        if (payment.businessId.toString() !== purchase.businessId.toString()) throw new AppError("Cross-entity allocation is not permitted: payment and purchase belong to different billing entities", 403);
         if (!payment.supplierId || payment.supplierId.toString() !== purchase.supplierId.toString()) throw new AppError("Payment supplier does not match purchase supplier", 400);
         if (await PaymentAllocation.findOne({ paymentId: payment._id, purchaseId: purchase._id }).session(session)) throw new AppError("This payment is already allocated to the purchase", 409);
         const allocated = await netDocumentAllocations({ businessId, documentKey: "purchaseId", documentId: purchase._id, session });
@@ -128,10 +165,154 @@ const allocatePayment = async ({ businessId, userId, paymentId, payload }) => {
     }
     return allocation;
   } finally { session.endSession(); }
+  }));
 };
 
-const listPayments = ({ businessId, query }) => Payment.find({ businessId }).sort("-paymentDate -createdAt").limit(Math.min(Number(query.limit) || 50, 100)).populate("customerId", "name").populate("supplierId", "supplierName");
-const getPayment = ({ businessId, paymentId }) => Payment.findOne({ _id: paymentId, businessId }).populate("customerId", "name").populate("supplierId", "supplierName");
+const getPayment = async ({ businessId, paymentId }) => {
+  const payment = await Payment.findOne({ _id: paymentId, businessId }).populate("customerId", "name").populate("supplierId", "supplierName");
+  if (!payment) return null;
+  const allocatedMinor = await netPaymentAllocations({ businessId, paymentId: payment._id });
+  const totalMinor = toMinorUnits(payment.amount, "Payment amount");
+  const unallocatedMinor = Math.max(totalMinor - allocatedMinor, 0);
+  const plain = typeof payment.toObject === "function" ? payment.toObject() : payment;
+  plain.allocatedAmount = fromMinorUnits(allocatedMinor);
+  plain.unallocatedAmount = fromMinorUnits(unallocatedMinor);
+  plain.allocationStatus = payment.status === "REVERSED"
+    ? "REVERSED"
+    : allocatedMinor >= totalMinor
+    ? "FULLY_ALLOCATED"
+    : allocatedMinor > 0
+    ? "PARTIALLY_ALLOCATED"
+    : "UNALLOCATED";
+  return plain;
+};
+
+const listPayments = async ({ businessId, query = {} }) => {
+  const filter = { businessId };
+  if (query.customerId) filter.customerId = query.customerId;
+  if (query.supplierId) filter.supplierId = query.supplierId;
+  if (query.direction) filter.direction = String(query.direction).toUpperCase();
+  if (query.status) filter.status = String(query.status).toUpperCase();
+
+  const payments = await Payment.find(filter)
+    .sort("-paymentDate -createdAt")
+    .limit(Math.min(Number(query.limit) || 50, 100))
+    .populate("customerId", "name")
+    .populate("supplierId", "supplierName");
+
+  const enriched = await Promise.all(
+    payments.map(async (payment) => {
+      const allocatedMinor = await netPaymentAllocations({ businessId, paymentId: payment._id });
+      const totalMinor = toMinorUnits(payment.amount, "Payment amount");
+      const unallocatedMinor = Math.max(totalMinor - allocatedMinor, 0);
+      const plain = typeof payment.toObject === "function" ? payment.toObject() : payment;
+      plain.allocatedAmount = fromMinorUnits(allocatedMinor);
+      plain.unallocatedAmount = fromMinorUnits(unallocatedMinor);
+      plain.allocationStatus = payment.status === "REVERSED"
+        ? "REVERSED"
+        : allocatedMinor >= totalMinor
+        ? "FULLY_ALLOCATED"
+        : allocatedMinor > 0
+        ? "PARTIALLY_ALLOCATED"
+        : "UNALLOCATED";
+      return plain;
+    })
+  );
+
+  if (query.unallocatedOnly === "true" || query.unallocatedOnly === true) {
+    return enriched.filter((p) => p.status === "POSTED" && p.unallocatedAmount > 0);
+  }
+  return enriched;
+};
+
+const getCustomerAdvances = async ({ businessId, customerId }) => {
+  const customer = await Customer.findOne({ _id: customerId, businessId });
+  if (!customer) throw new AppError("Customer not found", 404);
+  const payments = await listPayments({ businessId, query: { customerId, direction: "RECEIVED", unallocatedOnly: "true" } });
+  const totalUnallocatedMinor = payments.reduce(
+    (sum, p) => sum + toMinorUnits(p.unallocatedAmount, "Unallocated amount", { allowZero: true }),
+    0
+  );
+  return {
+    customerId: customer._id,
+    customerName: customer.name,
+    businessId,
+    totalUnallocatedAmount: fromMinorUnits(totalUnallocatedMinor),
+    advances: payments,
+  };
+};
+
+const reversePayment = async ({ businessId, userId, paymentId, reason = "" }) => {
+  const session = await mongoose.startSession();
+  try {
+    let reversal;
+    await session.withTransaction(async () => {
+      const payment = await Payment.findOne({ _id: paymentId, businessId, status: "POSTED" }).session(session);
+      if (!payment) throw new AppError("Posted payment not found", 404);
+      const existingReversal = await Payment.findOne({ businessId, reversalOfPaymentId: payment._id }).session(session);
+      if (existingReversal) throw new AppError("This payment has already been reversed", 409);
+      const activeAllocatedMinor = await netPaymentAllocations({ businessId, paymentId: payment._id, session });
+      if (activeAllocatedMinor > 0) {
+        throw new AppError("Cannot reverse payment with active allocations. Reverse all allocations first.", 400);
+      }
+      const counterDirection = payment.direction === "RECEIVED" ? "PAID" : "RECEIVED";
+      const notes = reason ? ("Reversal of payment " + payment._id + ": " + reason) : ("Reversal of payment " + payment._id);
+      [reversal] = await Payment.create(
+        [
+          {
+            businessId,
+            direction: counterDirection,
+            amount: payment.amount,
+            currency: payment.currency || "INR",
+            paymentDate: new Date(),
+            paymentMethod: payment.paymentMethod || "OTHER",
+            referenceNumber: "REFUND:" + (payment.referenceNumber || payment._id),
+            customerId: payment.customerId || null,
+            supplierId: payment.supplierId || null,
+            reversalOfPaymentId: payment._id,
+            notes,
+            createdBy: userId,
+          },
+        ],
+        { session }
+      );
+      if (payment.customerId) {
+        await createCustomerLedgerEntryOnce(
+          {
+            businessId,
+            customerId: payment.customerId,
+            eventType: "REFUND",
+            amount: payment.amount,
+            direction: "DEBIT",
+            paymentId: reversal._id,
+            sourceKey: "PAYMENT_REVERSAL:" + reversal._id,
+            notes,
+            createdBy: userId,
+          },
+          { session }
+        );
+      } else if (payment.supplierId) {
+        await createSupplierLedgerEntryOnce(
+          {
+            businessId,
+            supplierId: payment.supplierId,
+            eventType: "REFUND",
+            amount: payment.amount,
+            direction: "CREDIT",
+            paymentId: reversal._id,
+            sourceKey: "PAYMENT_REVERSAL:" + reversal._id,
+            notes,
+            createdBy: userId,
+          },
+          { session }
+        );
+      }
+    });
+    return reversal;
+  } finally {
+    session.endSession();
+  }
+};
 const listCustomerLedger = ({ businessId, customerId }) => CustomerLedger.find({ businessId, customerId }).sort("-createdAt").populate("invoiceId", "invoiceNumber").populate("paymentId", "referenceNumber amount");
 const listSupplierLedger = ({ businessId, supplierId }) => SupplierLedger.find({ businessId, supplierId }).sort("-createdAt").populate("purchaseId", "purchaseNumber").populate("paymentId", "referenceNumber amount");
 const listAllocations = async ({ businessId, sourceType, sourceDocumentId }) => {
@@ -188,4 +369,4 @@ const reverseAllocation = async ({ businessId, userId, allocationId, amount, rea
     }
   }); return reversal; } finally { session.endSession(); }
 };
-module.exports = { allocatePayment, createPayment, getPayment, listAllocations, listCustomerLedger, listPayments, listSupplierLedger, reverseAllocation, validateAllocationCounterparty, validateReversalRequest };
+module.exports = { allocatePayment, createPayment, getCustomerAdvances, getPayment, listAllocations, listCustomerLedger, listPayments, listSupplierLedger, netDocumentAllocations, netPaymentAllocations, reverseAllocation, reversePayment, validateAllocationCounterparty, validateReversalRequest };

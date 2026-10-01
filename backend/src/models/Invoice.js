@@ -108,6 +108,10 @@ const invoiceSchema = new mongoose.Schema(
     sourceOrderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order", default: null, immutable: true, index: true },
     sourceRecurringProfileId: { type: mongoose.Schema.Types.ObjectId, ref: "RecurringBillingProfile", default: null, immutable: true, index: true },
     recurringOccurrenceKey: { type: String, trim: true, default: "", immutable: true },
+    replacesInvoiceId: { type: mongoose.Schema.Types.ObjectId, ref: "Invoice", default: null, immutable: true, index: true },
+    reissuedInvoiceId: { type: mongoose.Schema.Types.ObjectId, ref: "Invoice", default: null, index: true },
+    reissuedInvoiceNumber: { type: String, trim: true, default: "" },
+    reissueReason: { type: String, trim: true, default: "" },
     gstSnapshot: { type: Object, default: null },
     gstBreakup: { cgst: { type: Number, default: 0 }, sgst: { type: Number, default: 0 }, utgst: { type: Number, default: 0 }, igst: { type: Number, default: 0 }, taxableValue: { type: Number, default: 0 }, hsnSacSummary: { type: Object, default: {} } },
     invoiceDate: {
@@ -185,6 +189,8 @@ invoiceSchema.index({ businessId: 1, recurringOccurrenceKey: 1 }, { unique: true
 invoiceSchema.index({ businessId: 1, customerId: 1, invoiceDate: -1 });
 invoiceSchema.index({ businessId: 1, status: 1, invoiceDate: -1 });
 invoiceSchema.index({ businessId: 1, isSampleData: 1 });
+invoiceSchema.index({ businessId: 1, replacesInvoiceId: 1 }, { partialFilterExpression: { replacesInvoiceId: { $type: "objectId" } } });
+invoiceSchema.index({ businessId: 1, reissuedInvoiceId: 1 }, { partialFilterExpression: { reissuedInvoiceId: { $type: "objectId" } } });
 
 // Unique: one invoice per CRM source event per business
 invoiceSchema.index(

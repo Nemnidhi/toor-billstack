@@ -637,6 +637,16 @@ const cancelInvoice = asyncHandler(async (req, res) => {
         throw new AppError("Invoice is already cancelled", 400);
       }
 
+      const activeAllocatedMinor = await paymentService.netDocumentAllocations({
+        businessId: req.tenant.businessId,
+        documentKey: "invoiceId",
+        documentId: invoice._id,
+        session,
+      });
+      if (activeAllocatedMinor > 0) {
+        throw new AppError("Cannot cancel an invoice with active payment allocations. Please reverse all payment allocations before cancelling.", 400);
+      }
+
       const business = await Business.findById(req.tenant.businessId).session(session);
       const customer = await Customer.findOne({
         _id: invoice.customerId,
@@ -730,6 +740,84 @@ const emailInvoicePdf = asyncHandler(async (req, res) => {
   });
 });
 
+const reissueInvoice = asyncHandler(async (req, res) => {
+  const session = await mongoose.startSession();
+  try {
+    let reissuedInvoice;
+    await session.withTransaction(async () => {
+      const original = await Invoice.findOne({
+        _id: req.params.invoiceId,
+        businessId: req.tenant.businessId,
+      }).session(session);
+      if (!original) throw new AppError("Invoice not found", 404);
+      if (original.status !== "cancelled") throw new AppError("Only cancelled invoices can be reissued", 400);
+      if (original.reissuedInvoiceId) throw new AppError("Invoice has already been reissued as " + original.reissuedInvoiceNumber, 409);
+      const activeAllocated = await paymentService.netDocumentAllocations({
+        businessId: req.tenant.businessId,
+        documentKey: "invoiceId",
+        documentId: original._id,
+        session,
+      });
+      if (activeAllocated > 0) throw new AppError("Cannot reissue an invoice with active payment allocations", 400);
+      const business = await Business.findById(req.tenant.businessId).session(session);
+      if (!business) throw new AppError("Business not found", 404);
+      const allowedBusinessIds = [req.tenant.businessId];
+      if (business.billingParentId) allowedBusinessIds.push(business.billingParentId);
+      const customer = await Customer.findOne({
+        _id: req.body.customerId || original.customerId,
+        businessId: { $in: allowedBusinessIds },
+      }).session(session);
+      if (!customer) throw new AppError("Customer not found", 404);
+      const rawItems = Array.isArray(req.body.lineItems) && req.body.lineItems.length > 0 ? req.body.lineItems : original.lineItems;
+      if (!rawItems.length) throw new AppError("At least one invoice line item is required", 400);
+      const products = await Product.find({ _id: { $in: invoiceProductIds(rawItems) }, businessId: req.tenant.businessId }).session(session);
+      const normalizedItems = buildInvoiceLineItems({ items: rawItems, products });
+      const { totals, gstSnapshot } = buildTaxDocument({
+        business, counterparty: customer, products, placeOfSupplyCode: req.body.placeOfSupplyCode || original.gstSnapshot?.placeOfSupplyCode,
+        lineItems: normalizedItems, shippingCharges: req.body.shippingCharges !== undefined ? req.body.shippingCharges : original.shippingCharges,
+        roundOff: req.body.roundOff !== undefined ? req.body.roundOff : original.roundOff, amountPaid: 0,
+      });
+      const sequence = business.invoiceNumbering?.nextSequence || 1;
+      const invoiceDate = req.body.invoiceDate ? new Date(req.body.invoiceDate) : new Date();
+      const invoiceNumber = buildInvoiceNumber({ prefix: business.invoiceNumbering?.prefix, format: business.invoiceNumbering?.format, sequence, date: invoiceDate });
+      let crmSourceRef = null;
+      if (original.crmSourceRef && original.crmSourceRef.sourceId) {
+        crmSourceRef = {
+          source: original.crmSourceRef.source,
+          sourceType: original.crmSourceRef.sourceType,
+          sourceId: original.crmSourceRef.sourceId,
+          billingPurpose: original.crmSourceRef.billingPurpose + ":REISSUE:" + original.invoiceNumber,
+          billingPeriod: original.crmSourceRef.billingPeriod || "",
+        };
+      }
+      const reason = req.body.reason ? String(req.body.reason).trim() : "Reissue of cancelled invoice";
+      const created = await Invoice.create([
+        {
+          businessId: req.tenant.businessId, customerId: customer._id, invoiceNumber, invoiceDate,
+          dueDate: req.body.dueDate ? new Date(req.body.dueDate) : invoiceDate,
+          customerDetails: { name: customer.name, email: customer.email, phone: customer.phone, address: customer.billingAddress, gstNumber: customer.gstNumber },
+          businessDetails: { name: business.name, email: business.email || business.billingEmail, phone: business.phone, address: business.address, gstNumber: business.gstTaxId },
+          replacesInvoiceId: original._id, reissueReason: reason, crmSourceRef,
+          lineItems: totals.lineItems, subtotal: totals.subtotal, totalTax: totals.totalTax, totalDiscount: totals.totalDiscount,
+          shippingCharges: totals.shippingCharges, roundOff: totals.roundOff, grandTotal: totals.grandTotal,
+          amountPaid: 0, balanceDue: totals.grandTotal, paymentStatus: "unpaid",
+          notes: req.body.notes?.trim() || ("Replaces cancelled invoice " + original.invoiceNumber + ". " + reason),
+          termsAndConditions: req.body.termsAndConditions?.trim() || original.termsAndConditions || "",
+          gstSnapshot,
+          gstBreakup: gstSnapshot ? { cgst: gstSnapshot.cgst, sgst: gstSnapshot.sgst, utgst: gstSnapshot.utgst, igst: gstSnapshot.igst, taxableValue: gstSnapshot.taxableValue, hsnSacSummary: gstSnapshot.hsnSacSummary } : undefined,
+          status: "issued", createdBy: req.user._id,
+        }
+      ], { session });
+      reissuedInvoice = created[0];
+      if (business.invoiceNumbering) { business.invoiceNumbering.nextSequence = sequence + 1; await business.save({ session }); }
+      original.reissuedInvoiceId = reissuedInvoice._id; original.reissuedInvoiceNumber = reissuedInvoice.invoiceNumber; original.reissueReason = reason; await original.save({ session });
+      await createCustomerLedgerEntryOnce({ businessId: req.tenant.businessId, customerId: customer._id, eventType: "INVOICE", amount: totals.grandTotal, direction: "DEBIT", invoiceId: reissuedInvoice._id, sourceKey: "INVOICE:" + reissuedInvoice._id + ":ISSUE", createdBy: req.user._id, notes: "Reissue replacing " + original.invoiceNumber }, { session });
+      await syncCustomerInvoiceHistory({ customer, businessId: req.tenant.businessId, session });
+    });
+    res.status(201).json({ message: "Invoice reissued successfully", data: reissuedInvoice });
+  } finally { session.endSession(); }
+});
+
 module.exports = {
   previewInvoiceTax,
   cancelInvoice,
@@ -738,5 +826,6 @@ module.exports = {
   emailInvoicePdf,
   getInvoiceById,
   listInvoices,
+  reissueInvoice,
   updateInvoice,
 };

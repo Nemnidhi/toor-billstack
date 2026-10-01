@@ -8,6 +8,7 @@ const {
   emailInvoicePdf,
   getInvoiceById,
   listInvoices,
+  reissueInvoice,
   updateInvoice,
 } = require("../controllers/invoice.controller");
 const {
@@ -49,6 +50,7 @@ router.put(
   updateInvoice
 );
 router.post("/:invoiceId/cancel", validateObjectIdParam("invoiceId"), permit("owner", "admin", "accountant"), cancelInvoice);
+router.post("/:invoiceId/reissue", validateObjectIdParam("invoiceId"), permit("owner", "admin", "accountant"), reissueInvoice);
 router.post("/:invoiceId/share/email", validateObjectIdParam("invoiceId"), permit("owner", "admin", "staff", "accountant"), emailInvoicePdf);
 
 module.exports = router;

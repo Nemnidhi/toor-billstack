@@ -1,5 +1,5 @@
 const express = require("express");
-const { allocatePayment, createPayment, getPayment, listPayments, reverseAllocation } = require("../controllers/payment.controller");
+const { allocatePayment, createPayment, getCustomerAdvances, getPayment, listPayments, reverseAllocation, reversePayment } = require("../controllers/payment.controller");
 const authMiddleware = require("../middlewares/auth.middleware");
 const { validateObjectIdParam } = require("../middlewares/object-id.middleware");
 const { permit } = require("../middlewares/role.middleware");
@@ -13,6 +13,8 @@ router.use(authMiddleware, tenantMiddleware, requireActiveSubscription());
 router.get("/", listPayments);
 router.get("/:paymentId", validateObjectIdParam("paymentId"), getPayment);
 router.post("/", permit("owner", "admin", "accountant"), validate(paymentCreateValidator), createPayment);
+router.get("/customer/:customerId/advances", validateObjectIdParam("customerId"), getCustomerAdvances);
 router.post("/:paymentId/allocate", validateObjectIdParam("paymentId"), permit("owner", "admin", "accountant"), validate(paymentAllocationValidator), allocatePayment);
+router.post("/:paymentId/reverse", validateObjectIdParam("paymentId"), permit("owner", "admin", "accountant"), reversePayment);
 router.post("/allocations/:allocationId/reverse", validateObjectIdParam("allocationId"), permit("owner", "admin", "accountant"), reverseAllocation);
 module.exports = router;

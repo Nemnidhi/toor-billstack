@@ -29,4 +29,13 @@ const reverseAllocation = asyncHandler(async (req, res) => {
 });
 const listInvoiceAllocations = asyncHandler(async (req, res) => res.json({ message: "Invoice allocations fetched successfully", data: await paymentService.listAllocations({ businessId: req.tenant.businessId, sourceType: "INVOICE", sourceDocumentId: req.params.invoiceId }) }));
 const listPurchaseAllocations = asyncHandler(async (req, res) => res.json({ message: "Purchase allocations fetched successfully", data: await paymentService.listAllocations({ businessId: req.tenant.businessId, sourceType: "PURCHASE", sourceDocumentId: req.params.purchaseId }) }));
-module.exports = { allocatePayment, createPayment, getPayment, listInvoiceAllocations, listPayments, listPurchaseAllocations, reverseAllocation };
+const reversePayment = asyncHandler(async (req, res) => {
+  const reversal = await paymentService.reversePayment({ businessId: req.tenant.businessId, userId: req.user._id, paymentId: req.params.paymentId, reason: req.body.reason });
+  await writeAuditLog({ req, action: "PAYMENT_REVERSED", entityType: "PAYMENT", entityId: reversal._id, metadata: { originalPaymentId: req.params.paymentId, amount: reversal.amount } });
+  res.status(201).json({ message: "Payment reversed successfully", data: reversal });
+});
+const getCustomerAdvances = asyncHandler(async (req, res) => {
+  const advances = await paymentService.getCustomerAdvances({ businessId: req.tenant.businessId, customerId: req.params.customerId });
+  res.status(200).json({ message: "Customer advances fetched successfully", data: advances });
+});
+module.exports = { allocatePayment, createPayment, getCustomerAdvances, getPayment, listInvoiceAllocations, listPayments, listPurchaseAllocations, reverseAllocation, reversePayment };
