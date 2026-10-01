@@ -29,6 +29,7 @@ import {
   getAccountLedgerRequest,
   getAccountsRequest,
   downloadExportCsv,
+  downloadExportXlsx,
 } from "../api";
 import { authStore } from "../../../store/authStore";
 import { money } from "../../dashboard/reportPresentation";
@@ -131,6 +132,26 @@ const AccountingReportsPage = () => {
         .finally(() => setLoading(false));
     }
   }, [activeTab, selectedAccountId]);
+
+  const handleDownloadXlsx = async () => {
+    try {
+      setExportLoading(true);
+      const blob = await downloadExportXlsx(queryParams);
+      const url = window.URL.createObjectURL(
+        new Blob([blob], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+      );
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", "accountant-pack-" + selectedEntity + "-" + selectedPeriod + ".xlsx");
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      alert("Excel download failed: " + (err.response?.data?.message || err.message));
+    } finally {
+      setExportLoading(false);
+    }
+  };
 
   const handleDownloadCsv = async (reportType) => {
     try {

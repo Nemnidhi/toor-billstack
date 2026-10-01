@@ -46,6 +46,14 @@ export const getExportPackRequest = async (params = {}) => {
   return response.data.data;
 };
 
+export const downloadExportXlsx = async (params = {}) => {
+  const response = await api.get("/accounting/reports/export-pack", {
+    params: { ...params, format: "xlsx" },
+    responseType: "blob",
+  });
+  return response.data;
+};
+
 export const downloadExportCsv = async (params = {}) => {
   const response = await api.get("/accounting/reports/export-pack", {
     params: { ...params, format: "csv" },

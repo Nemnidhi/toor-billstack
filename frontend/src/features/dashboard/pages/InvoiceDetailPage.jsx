@@ -14,6 +14,8 @@ import {
   communicationSummaryRequest,
   communicationTemplatesRequest,
   createPaymentRequest,
+  getCustomerAdvancesRequest,
+  reissueInvoiceRequest,
   downloadInvoicePdfRequest,
   emailInvoiceRequest,
   getEInvoiceDetailsRequest,
@@ -44,6 +46,11 @@ const InvoiceDetailPage = () => {
   const [error, setError] = useState("");
   const [active, setActive] = useState("");
   const [showCancel, setShowCancel] = useState(false);
+  const [customerAdvances, setCustomerAdvances] = useState(null);
+  const [showAdvanceModal, setShowAdvanceModal] = useState(false);
+  const [advanceAllocationAmount, setAdvanceAllocationAmount] = useState("");
+  const [selectedAdvancePaymentId, setSelectedAdvancePaymentId] = useState("");
+  const [advanceError, setAdvanceError] = useState("");
   const [eInvoice, setEInvoice] = useState(null);
   const [eInvoiceResult, setEInvoiceResult] = useState(null);
   const [deliveries, setDeliveries] = useState([]);
@@ -212,6 +219,44 @@ const InvoiceDetailPage = () => {
     setPaymentOpen(true);
   };
 
+    const handleApplyAdvance = async (e) => {
+    e.preventDefault();
+    const amount = Number(advanceAllocationAmount);
+    if (!amount || amount <= 0) return setAdvanceError("Enter a valid allocation amount.");
+    if (amount > invoice.balanceDue) return setAdvanceError("Allocation cannot exceed invoice balance due.");
+    if (!selectedAdvancePaymentId) return setAdvanceError("Select an advance payment.");
+
+    try {
+      setActive("advance");
+      setAdvanceError("");
+      await allocatePaymentRequest(selectedAdvancePaymentId, {
+        invoiceId: invoice._id,
+        allocatedAmount: amount,
+      });
+      setShowAdvanceModal(false);
+      uiStore.getState().pushToast({ tone: "success", message: `${money(amount)} advance credit applied to ${invoice.invoiceNumber}.` });
+      await load();
+    } catch (err) {
+      setAdvanceError(err.response?.data?.message || err.message || "Failed to apply advance.");
+    } finally {
+      setActive("");
+    }
+  };
+
+  const handleReissue = async () => {
+    if (!window.confirm(`Are you sure you want to reissue a replacement invoice for cancelled invoice ${invoice.invoiceNumber}?`)) return;
+    try {
+      setActive("reissue");
+      const reissued = await reissueInvoiceRequest(invoice._id);
+      uiStore.getState().pushToast({ tone: "success", message: `Invoice reissued successfully as ${reissued.invoiceNumber}.` });
+      navigate(`/dashboard/invoices/${reissued._id}`);
+    } catch (err) {
+      setError(err.response?.data?.message || err.message || "Unable to reissue invoice.");
+    } finally {
+      setActive("");
+    }
+  };
+
   const recordPayment = async (event) => {
     event.preventDefault();
     const amount = Number(paymentForm.amount);
@@ -303,14 +348,126 @@ const InvoiceDetailPage = () => {
       <aside className={isRealEstateSelfHosted ? "columns-1 md:columns-2 xl:columns-3 [column-gap:1.5rem]" : "space-y-6"}>
         {invoice.gstSnapshot ? <div className={isRealEstateSelfHosted ? "mb-6 break-inside-avoid" : ""}><GstEInvoicePanel invoice={invoice} eInvoice={eInvoice || invoice.eInvoice} result={eInvoiceResult} active={active} onCheck={checkReadiness} onPrepare={preparePayload} showEInvoiceActions={!isRealEstateSelfHosted} /></div> : null}
         {!isRealEstateSelfHosted ? <CommunicationPanel deliveries={deliveries} reminders={reminders} templates={templates} form={communicationForm} setForm={setCommunicationForm} providerStatus={providerStatus} active={active} onSend={sendViaChannel} onSchedule={scheduleReminder} /> : null}
-        <div className={isRealEstateSelfHosted ? "mb-6 break-inside-avoid" : ""}><PaymentSummary invoice={invoice} paymentLabel={paymentLabel} paymentClass={paymentClass} canRecord={canManagePayments && invoice.status !== "cancelled" && Number(invoice.balanceDue || 0) > 0} onRecord={openPayment} /></div>
+        <div className={isRealEstateSelfHosted ? "mb-6 break-inside-avoid" : ""}><PaymentSummary invoice={invoice} paymentLabel={paymentLabel} paymentClass={paymentClass} canRecord={canManagePayments && invoice.status !== "cancelled" && Number(invoice.balanceDue || 0) > 0} onRecord={openPayment} customerAdvances={customerAdvances} onApplyAdvance={() => setShowAdvanceModal(true)} /></div>
         {(!isRealEstateSelfHosted || allocations.length) ? <div className={isRealEstateSelfHosted ? "mb-6 break-inside-avoid" : ""}><PaymentAllocations invoice={invoice} rows={allocations} canReverse={canManagePayments} reversing={reversing} onReverse={reversePayment} onReceipt={downloadReceipt} /></div> : null}
         <div className={isRealEstateSelfHosted ? "mb-6 break-inside-avoid" : ""}><section className="rounded-2xl border p-5" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}><h3 className="text-lg font-semibold">Document details</h3><dl className="mt-4 space-y-3 text-sm"><AmountRow label="Created" value={timestamp(invoice.createdAt)} /><AmountRow label="Last updated" value={timestamp(invoice.updatedAt)} /></dl></section></div>
-        {invoice.status !== "cancelled" ? <div className={isRealEstateSelfHosted ? "mb-6 break-inside-avoid" : ""}><section className="rounded-2xl border border-rose-500/30 p-5"><h3 className="text-lg font-semibold text-rose-600">Invoice actions</h3><p className="mt-2 text-sm" style={{ color: "var(--text-muted)" }}>Cancellation is consequential and reverses the invoice stock impact.</p><button onClick={() => setShowCancel(true)} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/40 px-4 py-2.5 text-sm font-medium text-rose-600"><Trash2 size={16} /> Cancel invoice</button></section></div> : null}
+        {invoice.status !== "cancelled" ? (
+  <div className={isRealEstateSelfHosted ? "mb-6 break-inside-avoid" : ""}>
+    <section className="rounded-2xl border border-rose-500/30 p-5">
+      <h3 className="text-lg font-semibold text-rose-600">Invoice actions</h3>
+      <p className="mt-2 text-sm" style={{ color: "var(--text-muted)" }}>
+        Cancellation is consequential and reverses the invoice stock and accounting impact.
+      </p>
+      <button onClick={() => setShowCancel(true)} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/40 px-4 py-2.5 text-sm font-medium text-rose-600">
+        <Trash2 size={16} /> Cancel invoice
+      </button>
+    </section>
+  </div>
+) : (
+  <div className={isRealEstateSelfHosted ? "mb-6 break-inside-avoid" : ""}>
+    <section className="rounded-2xl border border-slate-200 dark:border-slate-800 p-5">
+      <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-200">Cancelled Invoice</h3>
+      {invoice.reissuedInvoiceNumber ? (
+        <p className="mt-2 text-sm text-emerald-600 font-semibold">
+          Replaced by reissued invoice: <strong>{invoice.reissuedInvoiceNumber}</strong>
+        </p>
+      ) : canManagePayments ? (
+        <div className="space-y-3 mt-3">
+          <p className="text-xs text-slate-500">
+            This invoice is cancelled. You can reissue a replacement invoice referencing this record.
+          </p>
+          <button onClick={handleReissue} disabled={active === "reissue"} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-brand-700 disabled:opacity-50">
+            <RefreshCw size={16} className={active === "reissue" ? "animate-spin" : ""} />
+            {active === "reissue" ? "Reissuing..." : "Reissue Replacement Invoice"}
+          </button>
+        </div>
+      ) : null}
+    </section>
+  </div>
+)}
       </aside>
     </div>
 
-    {showCancel ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4"><div className="w-full max-w-md rounded-2xl border p-6 shadow-2xl" style={{ borderColor: "var(--panel-border)", background: "var(--theme-surface-strong)" }}><CircleAlert className="text-rose-600" /><h3 className="mt-4 text-lg font-semibold">Cancel this invoice?</h3><p className="mt-2 text-sm" style={{ color: "var(--text-muted)" }}>Invoice <strong>{invoice.invoiceNumber}</strong> will be cancelled and its stock impact reversed. This cannot be undone.</p><div className="mt-6 flex justify-end gap-3"><button onClick={() => setShowCancel(false)} disabled={active === "cancel"} className="rounded-xl border px-4 py-2.5 text-sm" style={{ borderColor: "var(--panel-border)" }}>Keep invoice</button><button onClick={cancel} disabled={active === "cancel"} className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{active === "cancel" ? "Cancelling..." : "Cancel invoice"}</button></div></div></div> : null}
+    {showAdvanceModal && customerAdvances?.advances?.length > 0 && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900 space-y-4">
+      <div className="flex items-center justify-between border-b pb-3 dark:border-slate-800">
+        <h3 className="font-bold text-base text-slate-900 dark:text-white">Apply Customer Advance</h3>
+        <button onClick={() => setShowAdvanceModal(false)} className="text-slate-400 hover:text-slate-600">
+          <X size={18} />
+        </button>
+      </div>
+
+      <p className="text-xs text-slate-500">
+        Allocate existing unallocated payments/advances to settle invoice {invoice.invoiceNumber}.
+      </p>
+
+      {advanceError && (
+        <p className="rounded-xl bg-rose-500/10 p-3 text-xs text-rose-600 font-medium">{advanceError}</p>
+      )}
+
+      <form onSubmit={handleApplyAdvance} className="space-y-4">
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+            Select Advance Payment
+          </label>
+          <select
+            value={selectedAdvancePaymentId}
+            onChange={(e) => {
+              setSelectedAdvancePaymentId(e.target.value);
+              const found = customerAdvances.advances.find(a => a.paymentId === e.target.value);
+              if (found) {
+                setAdvanceAllocationAmount(String(Math.min(found.unallocatedAmount, invoice.balanceDue)));
+              }
+            }}
+            className="w-full rounded-xl border border-slate-200 p-2.5 text-xs dark:border-slate-800 dark:bg-slate-800"
+          >
+            {customerAdvances.advances.map(a => (
+              <option key={a.paymentId} value={a.paymentId}>
+                {date(a.paymentDate)} · {a.paymentMethod} · Avail: {money(a.unallocatedAmount)} (Ref: {a.referenceNumber || "—"})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+            Amount to Allocate (₹)
+          </label>
+          <input
+            type="number"
+            min="0.01"
+            max={invoice.balanceDue}
+            step="0.01"
+            required
+            value={advanceAllocationAmount}
+            onChange={(e) => setAdvanceAllocationAmount(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 p-2.5 text-xs dark:border-slate-800 dark:bg-slate-800"
+          />
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={() => setShowAdvanceModal(false)}
+            className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={active === "advance"}
+            className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {active === "advance" ? "Applying..." : "Confirm Allocation"}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+)}
+
+      {showCancel ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4"><div className="w-full max-w-md rounded-2xl border p-6 shadow-2xl" style={{ borderColor: "var(--panel-border)", background: "var(--theme-surface-strong)" }}><CircleAlert className="text-rose-600" /><h3 className="mt-4 text-lg font-semibold">Cancel this invoice?</h3><p className="mt-2 text-sm" style={{ color: "var(--text-muted)" }}>Invoice <strong>{invoice.invoiceNumber}</strong> will be cancelled and its stock impact reversed. This cannot be undone.</p><div className="mt-6 flex justify-end gap-3"><button onClick={() => setShowCancel(false)} disabled={active === "cancel"} className="rounded-xl border px-4 py-2.5 text-sm" style={{ borderColor: "var(--panel-border)" }}>Keep invoice</button><button onClick={cancel} disabled={active === "cancel"} className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{active === "cancel" ? "Cancelling..." : "Cancel invoice"}</button></div></div></div> : null}
     {paymentOpen ? <PaymentModal invoice={invoice} form={paymentForm} setForm={setPaymentForm} error={paymentError} saving={active === "payment"} onClose={() => !active && setPaymentOpen(false)} onSubmit={recordPayment} /> : null}
   </div>;
 };
@@ -318,7 +475,7 @@ const InvoiceDetailPage = () => {
 const Party = ({ title, party, link }) => <div><p className="text-xs font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{title}</p>{link ? <button onClick={link} className="mt-2 text-left text-lg font-semibold text-brand-600 hover:underline">{party.name || "Customer"}</button> : <p className="mt-2 text-lg font-semibold">{party.name || "Business"}</p>}<div className="mt-2 space-y-1 text-sm" style={{ color: "var(--text-muted)" }}>{party.email ? <p>{party.email}</p> : null}{party.phone ? <p>{party.phone}</p> : null}{party.address || party.billingAddress ? <p>{party.address || party.billingAddress}</p> : null}{party.gstNumber ? <p>GST: {party.gstNumber}</p> : null}</div></div>;
 const AmountRow = ({ label, value }) => <div className="flex items-center justify-between gap-4"><span style={{ color: "var(--text-muted)" }}>{label}</span><span className="text-right font-medium">{value}</span></div>;
 
-const PaymentSummary = ({ invoice, paymentLabel, paymentClass, canRecord, onRecord }) => <section className="rounded-2xl border p-5" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}><p className="text-sm font-medium text-brand-600">Payment</p><h3 className="mt-1 text-lg font-semibold">Payment summary</h3><div className="mt-5 space-y-3"><AmountRow label="Invoice total" value={money(invoice.grandTotal)} /><AmountRow label="Amount received" value={money(invoice.amountPaid)} /><AmountRow label="Balance due" value={money(invoice.balanceDue)} /><AmountRow label="Status" value={<span className={`rounded-full px-2.5 py-1 text-xs font-medium ${paymentClass}`}>{paymentLabel}</span>} /></div>{canRecord ? <button type="button" onClick={onRecord} className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white"><ReceiptIndianRupee size={16} /> Pay remaining {money(invoice.balanceDue)}</button> : null}{invoice.financialRead?.reconciliation?.status === "MISMATCH" ? <p className="mt-5 rounded-xl bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">Payment history needs review because the allocated amount does not match the invoice balance.</p> : null}</section>;
+const PaymentSummary = ({ invoice, paymentLabel, paymentClass, canRecord, onRecord, customerAdvances, onApplyAdvance }) => <section className="rounded-2xl border p-5" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}><p className="text-sm font-medium text-brand-600">Payment</p><h3 className="mt-1 text-lg font-semibold">Payment summary</h3><div className="mt-5 space-y-3"><AmountRow label="Invoice total" value={money(invoice.grandTotal)} /><AmountRow label="Amount received" value={money(invoice.amountPaid)} /><AmountRow label="Balance due" value={money(invoice.balanceDue)} /><AmountRow label="Status" value={<span className={`rounded-full px-2.5 py-1 text-xs font-medium ${paymentClass}`}>{paymentLabel}</span>} /></div>{canRecord && customerAdvances?.totalUnallocatedAmount > 0 ? <div className="mt-4 rounded-xl border border-emerald-300 bg-emerald-50/80 p-3 text-xs dark:border-emerald-800/60 dark:bg-emerald-950/40"><div className="flex items-center justify-between font-semibold text-emerald-900 dark:text-emerald-200"><span>Unallocated Advance:</span><span className="text-sm font-bold text-emerald-700 dark:text-emerald-300">{money(customerAdvances.totalUnallocatedAmount)}</span></div><button type="button" onClick={onApplyAdvance} className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 font-bold text-white hover:bg-emerald-700 shadow-sm"><CheckCircle2 size={14} /> Apply Customer Advance</button></div> : null}{canRecord ? <button type="button" onClick={onRecord} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white"><ReceiptIndianRupee size={16} /> Pay remaining {money(invoice.balanceDue)}</button> : null}{invoice.financialRead?.reconciliation?.status === "MISMATCH" ? <p className="mt-5 rounded-xl bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">Payment history needs review because the allocated amount does not match the invoice balance.</p> : null}</section>;
 
 const PaymentAllocations = ({ rows, canReverse, reversing, onReverse, onReceipt }) => {
   return <section className="rounded-2xl border p-5" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}><h3 className="text-lg font-semibold">Payment history</h3><p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>Every instalment remains recorded with its date, mode and reference.</p>{rows.length ? <div className="mt-4 space-y-3">{rows.map((row) => <div key={row.allocationId || row._id} className="rounded-xl border p-3 text-sm" style={{ borderColor: "var(--panel-border)" }}><div className="flex items-start justify-between gap-3"><div><p className={`font-semibold ${row.reversal ? "line-through opacity-60" : ""}`}>{money(row.allocatedAmount)}</p><p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>{date(row.payment?.paymentDate || row.createdAt)} · {row.payment?.paymentMethod || "Method not captured"}</p></div><span className={`rounded-full px-2 py-1 text-xs ${row.reversal ? "bg-rose-500/10 text-rose-700" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"}`}>{row.reversal ? "Reversed" : "Received"}</span></div><dl className="mt-3 grid gap-2 text-xs"><AmountRow label="Reference" value={row.payment?.referenceNumber || "—"} />{row.reversal ? <><AmountRow label="Reversed on" value={date(row.reversal.createdAt)} /><AmountRow label="Reason" value={row.reversal.reason} /></> : null}</dl><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => onReceipt(row)} className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium" style={{ borderColor: "var(--panel-border)" }}><Download size={13} /> Receipt</button>{canReverse && !row.reversal ? <button type="button" disabled={reversing === row.allocationId} onClick={() => onReverse(row)} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/30 px-2.5 py-1.5 text-xs font-medium text-rose-600 disabled:opacity-50">{reversing === row.allocationId ? <LoaderCircle size={13} className="animate-spin" /> : <RotateCcw size={13} />} Reverse</button> : null}</div></div>)}</div> : <EmptyState title="No payments recorded" description="Use Record payment to add the first receipt against this invoice." />}</section>;

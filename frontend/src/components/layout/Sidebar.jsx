@@ -143,7 +143,7 @@ const Sidebar = () => {
 
   const visibleItems = navItems.filter((item) => {
     if (!canShowItem(item, user)) return false;
-    if (item.saasOnly && isSelfHostedWorkspace(moduleData, business)) return false;
+    if (item.saasOnly) return false; // Self-hosted TOOR deployment; hide SaaS subscription
     const moduleKey = item.moduleKey || ROUTE_MODULES[item.to];
     if (moduleStatus !== "success" && moduleKey) return false;
     return isActiveModule(moduleData, moduleKey) && shouldShowWorkspaceNavigation(moduleKey, moduleData, business);

@@ -1,4 +1,5 @@
-﻿const crypto = require("node:crypto");
+const crypto = require("node:crypto");
+const XLSX = require("xlsx");
 const AppError = require("./appError");
 const { toMinorUnits } = require("./money");
 
@@ -46,9 +47,12 @@ const parseCsvLines = (csvText) => {
  * Normalizes Date string to UTC Date object.
  * Supports: DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD, DD/MM/YY
  */
-const parseDateString = (dateStr) => {
-  if (!dateStr || typeof dateStr !== "string") return null;
-  const s = dateStr.trim();
+const parseDateString = (dateVal) => {
+  if (!dateVal) return null;
+  if (dateVal instanceof Date) {
+    return isNaN(dateVal.getTime()) ? null : dateVal;
+  }
+  const s = String(dateVal).trim();
 
   // YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
@@ -79,24 +83,26 @@ const parseDateString = (dateStr) => {
  */
 const parseNumericAmount = (val) => {
   if (val === null || val === undefined || val === "") return 0;
+  if (typeof val === "number") return isNaN(val) ? 0 : Math.abs(val);
   const cleaned = String(val).replace(/[^0-9.-]/g, "").trim();
   const num = parseFloat(cleaned);
   return isNaN(num) ? 0 : Math.abs(num);
 };
 
 /**
- * Normalizes bank statement rows from parsed CSV grid.
+ * Shared grid parser for both CSV lines and XLSX worksheets.
  */
-const parseBankStatementCsv = ({ csvText, bankAccountId }) => {
-  const rows = parseCsvLines(csvText);
-  if (rows.length < 2) {
-    throw new AppError("Bank statement CSV must contain headers and at least one transaction row", 400);
+const parseBankStatementGrid = ({ rows, bankAccountId }) => {
+  if (!rows || rows.length < 2) {
+    throw new AppError("Bank statement file must contain headers and at least one transaction row", 400);
   }
 
   // Locate header index (search for Date and Narration/Particulars/Description)
   let headerRowIndex = -1;
   for (let r = 0; r < Math.min(rows.length, 10); r++) {
-    const lower = rows[r].map((c) => c.toLowerCase());
+    const row = rows[r];
+    if (!Array.isArray(row)) continue;
+    const lower = row.map((c) => String(c || "").toLowerCase());
     const hasDate = lower.some((c) => c.includes("date"));
     const hasDesc = lower.some((c) => c.includes("narrat") || c.includes("desc") || c.includes("particular") || c.includes("remark") || c.includes("detail"));
     if (hasDate && hasDesc) {
@@ -109,7 +115,7 @@ const parseBankStatementCsv = ({ csvText, bankAccountId }) => {
     headerRowIndex = 0; // Default to first row
   }
 
-  const headers = rows[headerRowIndex].map((h) => h.toLowerCase());
+  const headers = rows[headerRowIndex].map((h) => String(h || "").toLowerCase());
 
   const colDate = headers.findIndex((h) => h.includes("date") && !h.includes("value"));
   const colValDate = headers.findIndex((h) => h.includes("value date"));
@@ -127,16 +133,16 @@ const parseBankStatementCsv = ({ csvText, bankAccountId }) => {
 
   for (let i = headerRowIndex + 1; i < rows.length; i++) {
     const row = rows[i];
-    if (!row || row.length === 0) continue;
+    if (!row || !Array.isArray(row) || row.length === 0) continue;
 
     const rawDate = row[colDate];
     const txnDate = parseDateString(rawDate);
     if (!txnDate) continue; // Skip non-data summary rows
 
-    const description = (row[colDesc] || "").trim();
+    const description = String(row[colDesc] || "").trim();
     if (!description) continue;
 
-    const reference = colRef !== -1 ? (row[colRef] || "").trim() : "";
+    const reference = colRef !== -1 ? String(row[colRef] || "").trim() : "";
     const rawValDate = colValDate !== -1 ? row[colValDate] : null;
     const valueDate = rawValDate ? parseDateString(rawValDate) : null;
 
@@ -186,8 +192,41 @@ const parseBankStatementCsv = ({ csvText, bankAccountId }) => {
   return parsedTransactions;
 };
 
+/**
+ * Normalizes bank statement rows from parsed CSV grid.
+ */
+const parseBankStatementCsv = ({ csvText, bankAccountId }) => {
+  const rows = parseCsvLines(csvText);
+  return parseBankStatementGrid({ rows, bankAccountId });
+};
+
+/**
+ * Normalizes bank statement rows from XLSX / XLS binary buffer.
+ */
+const parseBankStatementXlsx = ({ buffer, bankAccountId, sheetName = null }) => {
+  let workbook;
+  try {
+    workbook = XLSX.read(buffer, { type: "buffer", cellDates: false });
+  } catch (err) {
+    throw new AppError("Invalid or corrupted Excel file: " + err.message, 400);
+  }
+
+  if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+    throw new AppError("Excel file contains no worksheets", 400);
+  }
+
+  const targetSheet = sheetName && workbook.Sheets[sheetName] ? sheetName : workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[targetSheet];
+  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: "" });
+
+  return parseBankStatementGrid({ rows, bankAccountId });
+};
+
 module.exports = {
   parseCsvLines,
   parseDateString,
+  parseNumericAmount,
+  parseBankStatementGrid,
   parseBankStatementCsv,
+  parseBankStatementXlsx,
 };

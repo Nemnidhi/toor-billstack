@@ -6,25 +6,38 @@ const JournalEntry = require("../models/JournalEntry");
 const Account = require("../models/Account");
 const AppError = require("../utils/appError");
 const { toMinorUnits, fromMinorUnits } = require("../utils/money");
-const { parseBankStatementCsv } = require("../utils/csv-parser");
+const { parseBankStatementCsv, parseBankStatementXlsx } = require("../utils/csv-parser");
 const { ensureDefaultAccounts } = require("./accounting.service");
 
 /**
  * Import statement rows from CSV and store separately from financial journal.
  * Idempotent, duplicate-resistant via importFingerprint.
  */
-const importBankStatementCsv = async ({
+const importBankStatementFile = async ({
   businessId,
   bankAccountId,
-  csvText,
-  userId,
+  csvText = "",
+  fileBase64 = "",
+  fileName = "",
+  buffer = null,
 }) => {
   const account = await BankAccount.findOne({ _id: bankAccountId, businessId });
   if (!account) throw new AppError("Bank account not found for this billing entity", 404);
 
-  const parsedRows = parseBankStatementCsv({ csvText, bankAccountId });
+  let parsedRows = [];
+  if (buffer) {
+    parsedRows = parseBankStatementXlsx({ buffer, bankAccountId });
+  } else if (fileBase64) {
+    const buf = Buffer.from(fileBase64, "base64");
+    parsedRows = parseBankStatementXlsx({ buffer: buf, bankAccountId });
+  } else if (csvText) {
+    parsedRows = parseBankStatementCsv({ csvText, bankAccountId });
+  } else {
+    throw new AppError("Either csvText or fileBase64/buffer must be provided", 400);
+  }
+
   if (parsedRows.length === 0) {
-    throw new AppError("No valid transaction rows found in the CSV statement", 400);
+    throw new AppError("No valid transaction rows found in the statement file", 400);
   }
 
   const batchId = "BATCH-" + Date.now() + "-" + crypto.randomBytes(3).toString("hex");
@@ -33,6 +46,16 @@ const importBankStatementCsv = async ({
   let duplicateCount = 0;
 
   for (const row of parsedRows) {
+    const existing = await BankStatementTransaction.findOne({
+      businessId,
+      bankAccountId: account._id,
+      importFingerprint: row.importFingerprint,
+    });
+    if (existing) {
+      duplicateCount++;
+      continue;
+    }
+
     try {
       await BankStatementTransaction.create([
         {
@@ -71,6 +94,10 @@ const importBankStatementCsv = async ({
     duplicateCount,
     skippedCount: duplicateCount,
   };
+};
+
+const importBankStatementCsv = async (args) => {
+  return importBankStatementFile(args);
 };
 
 /**
@@ -363,6 +390,7 @@ const getReconciliationSummary = async ({ businessId, bankAccountId, asOfDate = 
 
 module.exports = {
   importBankStatementCsv,
+  importBankStatementFile,
   generateMatchSuggestions,
   confirmMatch,
   unmatchTransaction,

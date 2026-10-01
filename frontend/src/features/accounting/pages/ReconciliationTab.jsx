@@ -16,6 +16,8 @@ const ReconciliationTab = ({ selectedEntity }) => {
   const [loading, setLoading] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [csvText, setCsvText] = useState("");
+  const [uploadFile, setUploadFile] = useState(null);
+  const [fileBase64, setFileBase64] = useState("");
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
   const [error, setError] = useState("");
@@ -263,16 +265,39 @@ const ReconciliationTab = ({ selectedEntity }) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900 space-y-4">
             <div className="flex items-center justify-between border-b pb-3 dark:border-slate-800">
-              <h3 className="font-bold text-base text-slate-900 dark:text-white">Import Bank Statement CSV</h3>
+              <h3 className="font-bold text-base text-slate-900 dark:text-white">Import Bank Statement (CSV / XLSX)</h3>
               <button onClick={() => setShowImportModal(false)} className="text-slate-400 hover:text-slate-600">
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <p className="text-xs text-slate-500">
-              Paste standard bank CSV export content (Date, Narration, Ref No, Withdrawal/Debit, Deposit/Credit, Balance).
-              Duplicate rows will be automatically skipped based on transaction fingerprint.
-            </p>
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500">
+                Upload or paste bank statement (CSV or XLSX/Excel format). Recognized columns: Date, Narration/Description, Ref/UTR, Withdrawal/Debit, Deposit/Credit, Balance.
+                Duplicate rows are safely skipped via deterministic fingerprinting.
+              </p>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Upload Statement File (.csv, .xlsx, .xls)
+                </label>
+                <input
+                  type="file"
+                  accept=".csv, .xlsx, .xls"
+                  onChange={handleFileUpload}
+                  className="block w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-brand-50 file:text-brand-700 hover:file:bg-brand-100 dark:file:bg-slate-800 dark:file:text-slate-200"
+                />
+                {uploadFile && (
+                  <p className="mt-1 text-xs text-emerald-600 font-medium">Selected file: {uploadFile.name}</p>
+                )}
+              </div>
+
+              <div className="relative flex py-1 items-center">
+                <div className="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
+                <span className="flex-shrink mx-2 text-[10px] text-slate-400 uppercase font-bold">Or paste CSV raw text</span>
+                <div className="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
+              </div>
+            </div>
 
             {importResult && (
               <div className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
@@ -282,8 +307,7 @@ const ReconciliationTab = ({ selectedEntity }) => {
 
             <form onSubmit={handleImportSubmit} className="space-y-4">
               <textarea
-                rows={8}
-                required
+                rows={5}
                 value={csvText}
                 onChange={(e) => setCsvText(e.target.value)}
                 placeholder={"Date,Narration,Chq/Ref No,Withdrawal,Deposit,Balance\n01/05/2026,CLIENT PAYMENT,REF123,,50000.00,150000.00"}
@@ -300,7 +324,7 @@ const ReconciliationTab = ({ selectedEntity }) => {
                 </button>
                 <button
                   type="submit"
-                  disabled={importing || !csvText.trim()}
+                  disabled={importing || (!csvText.trim() && !uploadFile)}
                   className="rounded-xl bg-brand-600 px-5 py-2 text-xs font-bold text-white transition hover:bg-brand-700 disabled:opacity-50"
                 >
                   {importing ? "Importing..." : "Parse & Import Statement"}

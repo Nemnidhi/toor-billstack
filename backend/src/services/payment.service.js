@@ -354,7 +354,12 @@ const listPayments = async ({ businessId, query = {} }) => {
 // ---------------------------------------------------------------------------
 
 const getCustomerAdvances = async ({ businessId, customerId }) => {
-  const customer = await Customer.findOne({ _id: customerId, businessId }).select("name");
+  const Business = require("../models/Business");
+  const bus = await Business.findById(businessId);
+  const allowedIds = [businessId];
+  if (bus?.billingParentId) allowedIds.push(bus.billingParentId);
+
+  const customer = await Customer.findOne({ _id: customerId, businessId: { $in: allowedIds } }).select("name");
   if (!customer) throw new AppError("Customer not found", 404);
   const payments = await Payment.find({ businessId, customerId, direction: "RECEIVED", status: "POSTED" }).sort({ paymentDate: -1, createdAt: -1 });
   let totalUnallocatedMinor = 0;

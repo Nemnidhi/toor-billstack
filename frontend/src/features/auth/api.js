@@ -178,6 +178,17 @@ export const createPaymentRequest = async (payload) => {
   return response.data.data;
 };
 
+
+export const getCustomerAdvancesRequest = async (customerId) => {
+  const response = await api.get(`/payments/customer/${customerId}/advances`);
+  return response.data.data;
+};
+
+export const reissueInvoiceRequest = async (invoiceId, payload = {}) => {
+  const response = await api.post(`/invoices/${invoiceId}/reissue`, payload);
+  return response.data.data;
+};
+
 export const allocatePaymentRequest = async (paymentId, payload) => {
   const response = await api.post(`/payments/${paymentId}/allocate`, payload);
   return response.data.data;

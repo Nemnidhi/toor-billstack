@@ -110,17 +110,21 @@ const updateBankAccount = asyncHandler(async (req, res) => {
  */
 const importBankStatement = asyncHandler(async (req, res) => {
   const { businessId } = req.accountingScope;
-  const { bankAccountId, csvText } = req.body;
+  const { bankAccountId, csvText, fileBase64, fileName } = req.body;
 
-  if (!bankAccountId || !csvText) {
-    throw new AppError("bankAccountId and csvText are required", 400);
+  if (!bankAccountId) {
+    throw new AppError("bankAccountId is required", 400);
+  }
+  if (!csvText && !fileBase64) {
+    throw new AppError("Either csvText or fileBase64 is required", 400);
   }
 
-  const result = await reconciliationService.importBankStatementCsv({
+  const result = await reconciliationService.importBankStatementFile({
     businessId,
     bankAccountId,
     csvText,
-    userId: req.user._id,
+    fileBase64,
+    fileName,
   });
 
   res.status(200).json({ success: true, data: result });

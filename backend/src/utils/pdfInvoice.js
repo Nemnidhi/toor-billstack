@@ -90,16 +90,18 @@ const buildInvoicePdfDefinition = ({ invoice, business }) => {
     ];
   });
   const blueCell = (text, options = {}) => cell(text, { fillColor: "#d9effb", ...options });
+  const isNonGst = (invoice.sellerSnapshot?.billingEntityCode === "GOLDHAWK") || (business.billingEntityCode === "GOLDHAWK") || (!businessGstin && !totalTax);
+  const invoiceTitle = isNonGst ? "INVOICE" : "TAX INVOICE";
 
   return {
     info: {
-      title: `Tax Invoice ${compact(invoice.invoiceNumber)}`,
+      title: `${isNonGst ? "Invoice" : "Tax Invoice"} ${compact(invoice.invoiceNumber)}`,
       subject: `Invoice total ${numeric(invoice.grandTotal).toFixed(2)}`,
     },
     pageSize: "A4",
     pageMargins: [28, 24, 28, 26],
     content: [
-      { columns: [{ text: "TAX INVOICE", fontSize: 13, bold: true }, { text: "ORIGINAL FOR RECIPIENT", fontSize: 10, color: "#667085", alignment: "right" }], margin: [0, 0, 0, 14] },
+      { columns: [{ text: invoiceTitle, fontSize: 13, bold: true }, { text: "ORIGINAL FOR RECIPIENT", fontSize: 10, color: "#667085", alignment: "right" }], margin: [0, 0, 0, 14] },
       {
         table: { widths: ["*", "*"], body: [[
           { stack: [
@@ -129,7 +131,7 @@ const buildInvoicePdfDefinition = ({ invoice, business }) => {
           [blueCell(""), blueCell("TOTAL", { bold: true, alignment: "right" }), blueCell(""), blueCell(""), blueCell(`₹ ${money(invoice.totalDiscount)}`, { bold: true, alignment: "right" }), blueCell(`₹ ${money(invoice.grandTotal)}`, { bold: true, alignment: "right" })],
         ] }, layout: borderLayout,
       },
-      ...(businessGstin || customerGstin || totalTax ? [{
+      ...((businessGstin || customerGstin || totalTax) && !isNonGst ? [{
         margin: [0, 7, 0, 0],
         table: { headerRows: 1, widths: [58, "*", 40, 58, 48, 62, 68], body: [
           ["HSN/SAC", "Taxable Value", "CGST Rate", "CGST Amount", "SGST/IGST Rate", "SGST/IGST Amount", "Total Tax"].map((text) => blueCell(text, { alignment: "center", fontSize: 7.5 })),

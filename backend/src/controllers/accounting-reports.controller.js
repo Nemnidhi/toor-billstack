@@ -135,6 +135,14 @@ const exportAccountantPack = asyncHandler(async (req, res) => {
     query: req.query,
   });
 
+    if (format === "xlsx") {
+    const buffer = reportsService.buildAccountantExportXlsxBuffer(pack);
+    const filename = `accountant-pack-${pack.metadata.period.periodLabel.toLowerCase().replace(/[^a-z0-9]/g, "-")}.xlsx`;
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.send(buffer);
+  }
+
   if (format === "csv") {
     let csvContent = "";
     let filename = `accountant-pack-${pack.metadata.period.periodLabel.toLowerCase().replace(/[^a-z0-9]/g, "-")}.csv`;

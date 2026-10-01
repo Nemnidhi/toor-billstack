@@ -1038,6 +1038,44 @@ const getAccountantExportPack = async ({ businessId, isConsolidated = false, hom
   };
 };
 
+
+/**
+ * Generates a unified multi-sheet XLSX Excel workbook containing all 10 accountant registers.
+ */
+const buildAccountantExportXlsxBuffer = (pack) => {
+  const XLSX = require("xlsx");
+  const wb = XLSX.utils.book_new();
+
+  const addSheetFromCsv = (csvStr, sheetTitle) => {
+    if (!csvStr || typeof csvStr !== "string" || !csvStr.trim()) return;
+    try {
+      const parsed = XLSX.read(csvStr, { type: "string" });
+      const firstSheetName = parsed.SheetNames[0];
+      if (firstSheetName && parsed.Sheets[firstSheetName]) {
+        XLSX.utils.book_append_sheet(wb, parsed.Sheets[firstSheetName], sheetTitle.slice(0, 31));
+      }
+    } catch (_err) {}
+  };
+
+  addSheetFromCsv(pack.files.trialBalanceCsv, "Trial Balance");
+  addSheetFromCsv(pack.files.profitLossCsv, "Profit & Loss");
+  addSheetFromCsv(pack.files.balanceSheetCsv, "Balance Sheet");
+  addSheetFromCsv(pack.files.bankBookCsv, "Bank Book");
+  addSheetFromCsv(pack.files.cashBookCsv, "Cash Book");
+  addSheetFromCsv(pack.files.ledgersCsv, "General Ledgers");
+  addSheetFromCsv(pack.files.salesRegisterCsv, "Sales Register");
+  addSheetFromCsv(pack.files.expenseRegisterCsv, "Expense Register");
+  addSheetFromCsv(pack.files.receivablesCsv, "Customer Receivables");
+
+  if (pack.files.gstSummaryCsv) {
+    addSheetFromCsv(pack.files.gstSummaryCsv, "GST Summary");
+  } else if (pack.files.nonGstStatementCsv) {
+    addSheetFromCsv(pack.files.nonGstStatementCsv, "Non-GST Statement");
+  }
+
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+};
+
 module.exports = {
   getHistoricalWarning,
   getProfitAndLossReport,
@@ -1045,4 +1083,5 @@ module.exports = {
   getLedgerBookReport,
   getConsolidatedReport,
   getAccountantExportPack,
+  buildAccountantExportXlsxBuffer,
 };

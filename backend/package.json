@@ -38,6 +38,7 @@
     "multer": "^2.0.2",
     "nodemailer": "^6.10.1",
     "pdfmake": "^0.2.20",
-    "razorpay": "^2.9.6"
+    "razorpay": "^2.9.6",
+    "xlsx": "^0.18.5"
   }
 }
