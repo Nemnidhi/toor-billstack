@@ -17,7 +17,7 @@ import { isInvoicePreviewReady } from "../invoicePreview";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const makeLine = () => ({ productId: "", productName: "", quantity: 1, rate: "", taxRate: 0, hsnSac: "", gstClassification: "TAXABLE", discountType: "percent", discountValue: 0, saveForFuture: false });
-const makeForm = () => ({ customerId: "", invoiceDate: today(), dueDate: today(), shippingCharges: 0, roundOff: 0, notes: "", termsAndConditions: "", paymentMode: "unpaid", upfrontPaymentAmount: "", upfrontPaymentMethod: "BANK_TRANSFER", upfrontPaymentReference: "", lineItems: [makeLine()] });
+const makeForm = () => ({ customerId: "", crmSourceRef: null, invoiceDate: today(), dueDate: today(), shippingCharges: 0, roundOff: 0, notes: "", termsAndConditions: "", paymentMode: "unpaid", upfrontPaymentAmount: "", upfrontPaymentMethod: "BANK_TRANSFER", upfrontPaymentReference: "", lineItems: [makeLine()] });
 const makeCustomerForm = () => ({ name: "", phone: "", email: "", gstNumber: "", stateCode: "" });
 const makePaymentForm = () => ({ amount: "", paymentMethod: "BANK_TRANSFER", paymentDate: today(), referenceNumber: "", notes: "", idempotencyKey: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}` });
 const money = (value) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(value || 0));
@@ -80,12 +80,62 @@ const InvoicesPage = () => {
     onCreate: () => {
       const handoffCustomerId = sessionStorage.getItem("billstack-invoice-handoff-customer") || "";
       sessionStorage.removeItem("billstack-invoice-handoff-customer");
+
+      let billingCtx = null;
+      try {
+        const rawCtx = sessionStorage.getItem("billstack-invoice-billing-context");
+        if (rawCtx) billingCtx = JSON.parse(rawCtx);
+      } catch (_e) {}
+      sessionStorage.removeItem("billstack-invoice-billing-context");
+
+      let existingInv = null;
+      try {
+        const rawExisting = sessionStorage.getItem("billstack-invoice-existing-invoice");
+        if (rawExisting) existingInv = JSON.parse(rawExisting);
+      } catch (_e) {}
+      sessionStorage.removeItem("billstack-invoice-existing-invoice");
+
       pendingIssue.current = null;
       issuePaymentKey.current = makePaymentForm().idempotencyKey;
       setEditingId("");
-      setForm({ ...makeForm(), customerId: handoffCustomerId });
+
+      const initialForm = makeForm();
+      if (handoffCustomerId) initialForm.customerId = handoffCustomerId;
+
+      if (billingCtx) {
+        if (billingCtx.sourceRef) {
+          initialForm.crmSourceRef = billingCtx.sourceRef;
+        }
+        if (billingCtx.prefill?.notes) {
+          initialForm.notes = billingCtx.prefill.notes;
+        }
+        if (billingCtx.prefill?.reference) {
+          initialForm.termsAndConditions = initialForm.termsAndConditions
+            ? `${initialForm.termsAndConditions}\nReference: ${billingCtx.prefill.reference}`
+            : `Reference: ${billingCtx.prefill.reference}`;
+        }
+        if (billingCtx.prefill?.lineItems?.length) {
+          initialForm.lineItems = billingCtx.prefill.lineItems.map(item => ({
+            productId: "",
+            productName: item.productName || "",
+            quantity: item.quantity || 1,
+            rate: item.rate > 0 ? String(item.rate) : "",
+            taxRate: business?.billingEntityCode === "GOLDHAWK" ? 0 : 18,
+            hsnSac: "",
+            gstClassification: business?.billingEntityCode === "GOLDHAWK" ? "EXEMPT" : "TAXABLE",
+            discountType: "percent",
+            discountValue: 0,
+            saveForFuture: false,
+          }));
+        }
+      }
+
+      setForm(initialForm);
       setErrors({});
       setPostIssue(null);
+      if (existingInv) {
+        setMessage(`Note: An invoice (${existingInv.invoiceNumber}) has already been issued for this CRM record.`);
+      }
       setShowEditor(true);
       requestAnimationFrame(() => document.getElementById("invoice-editor")?.scrollIntoView({ behavior: "smooth", block: "start" }));
     },
@@ -226,7 +276,7 @@ const InvoicesPage = () => {
       }
       lineItems.push({ productId: productId || undefined, productName, quantity: Number(line.quantity || 0), rate: Number(line.rate || 0), taxRate: business?.billingEntityCode === "GOLDHAWK" ? 0 : Number(line.taxRate || 0), hsnSac: line.hsnSac || "", gstClassification: line.gstClassification || "TAXABLE", discountType: line.discountType, discountValue: Number(line.discountValue || 0) });
     }
-    return { placeOfSupplyCode: form.placeOfSupplyCode || undefined, customerId: form.customerId, invoiceDate: form.invoiceDate, dueDate: form.dueDate, shippingCharges: Number(form.shippingCharges || 0), roundOff: Number(form.roundOff || 0), notes: form.notes, termsAndConditions: form.termsAndConditions, lineItems };
+    return { placeOfSupplyCode: form.placeOfSupplyCode || undefined, customerId: form.customerId, crmSourceRef: form.crmSourceRef || undefined, invoiceDate: form.invoiceDate, dueDate: form.dueDate, shippingCharges: Number(form.shippingCharges || 0), roundOff: Number(form.roundOff || 0), notes: form.notes, termsAndConditions: form.termsAndConditions, lineItems };
   };
 
   const save = async (event, { send = false, recordPaymentAfterIssue = false } = {}) => {

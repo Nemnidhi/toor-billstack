@@ -44,8 +44,14 @@ const listCustomers = asyncHandler(async (req, res) => {
     "gstNumber",
   ]);
 
+  const currentBusiness = await Business.findById(req.tenant.businessId);
+  const allowedBusinessIds = [req.tenant.businessId];
+  if (currentBusiness?.billingParentId) {
+    allowedBusinessIds.push(currentBusiness.billingParentId);
+  }
+
   const filters = {
-    businessId: req.tenant.businessId,
+    businessId: { $in: allowedBusinessIds },
     ...searchFilter,
   };
 
@@ -69,9 +75,15 @@ const listCustomers = asyncHandler(async (req, res) => {
 });
 
 const getCustomerById = asyncHandler(async (req, res) => {
+  const currentBusiness = await Business.findById(req.tenant.businessId);
+  const allowedBusinessIds = [req.tenant.businessId];
+  if (currentBusiness?.billingParentId) {
+    allowedBusinessIds.push(currentBusiness.billingParentId);
+  }
+
   const customer = await Customer.findOne({
     _id: req.params.customerId,
-    businessId: req.tenant.businessId,
+    businessId: { $in: allowedBusinessIds },
   });
 
   if (!customer) {

@@ -123,6 +123,20 @@ const invoiceSchema = new mongoose.Schema(
       default: () => ({}),
     },
     sellerSnapshot: { type: mongoose.Schema.Types.Mixed, default: null, immutable: true },
+    // Phase 2: CRM source reference for duplicate invoice prevention.
+    // source + sourceType + sourceId + billingPurpose + billingPeriod form the idempotency key.
+    // Enforced unique at DB level (partial: only when set). Immutable once written.
+    crmSourceRef: {
+      type: new mongoose.Schema({
+        source: { type: String, trim: true, immutable: true },
+        sourceType: { type: String, trim: true, immutable: true },
+        sourceId: { type: String, trim: true, immutable: true },
+        billingPurpose: { type: String, trim: true, immutable: true },
+        billingPeriod: { type: String, trim: true, default: "", immutable: true },
+      }, { _id: false }),
+      default: null,
+      immutable: true,
+    },
     businessDetails: {
       type: invoicePartySnapshotSchema,
       default: () => ({}),
@@ -171,6 +185,12 @@ invoiceSchema.index({ businessId: 1, recurringOccurrenceKey: 1 }, { unique: true
 invoiceSchema.index({ businessId: 1, customerId: 1, invoiceDate: -1 });
 invoiceSchema.index({ businessId: 1, status: 1, invoiceDate: -1 });
 invoiceSchema.index({ businessId: 1, isSampleData: 1 });
+
+// Unique: one invoice per CRM source event per business
+invoiceSchema.index(
+  { businessId: 1, "crmSourceRef.source": 1, "crmSourceRef.sourceType": 1, "crmSourceRef.sourceId": 1, "crmSourceRef.billingPurpose": 1, "crmSourceRef.billingPeriod": 1 },
+  { unique: true, partialFilterExpression: { "crmSourceRef.sourceId": { $type: "string", $gt: "" } } }
+);
 
 invoiceSchema.pre("save", async function () {
   const business = await require("./Business").findById(this.businessId).session(this.$session());

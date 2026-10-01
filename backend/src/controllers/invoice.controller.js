@@ -28,7 +28,13 @@ const {
 
 const invoiceSortFields = ["invoiceDate", "dueDate", "grandTotal", "createdAt"];
 const previewInvoiceTax = asyncHandler(async (req, res) => {
-  const [business, customer] = await Promise.all([Business.findById(req.tenant.businessId), Customer.findOne({ _id: req.body.customerId, businessId: req.tenant.businessId })]);
+  const currentBusiness = await Business.findById(req.tenant.businessId);
+  const allowedBusinessIds = [req.tenant.businessId];
+  if (currentBusiness?.billingParentId) allowedBusinessIds.push(currentBusiness.billingParentId);
+  const [business, customer] = await Promise.all([
+    Promise.resolve(currentBusiness),
+    Customer.findOne({ _id: req.body.customerId, businessId: { $in: allowedBusinessIds } })
+  ]);
   if (!business || !customer) throw new AppError("Select a valid customer", 400);
   const products = await Product.find({ _id: { $in: invoiceProductIds(req.body.lineItems || []) }, businessId: req.tenant.businessId });
   const lineItems = buildInvoiceLineItems({ items: req.body.lineItems || [], products });
@@ -301,17 +307,46 @@ const createInvoice = asyncHandler(async (req, res) => {
 
     await session.withTransaction(async () => {
       const business = await Business.findById(req.tenant.businessId).session(session);
-      const customer = await Customer.findOne({
-        _id: req.body.customerId,
-        businessId: req.tenant.businessId,
-      }).session(session);
-
       if (!business) {
         throw new AppError("Business not found", 404);
       }
 
+      const allowedBusinessIds = [req.tenant.businessId];
+      if (business.billingParentId) allowedBusinessIds.push(business.billingParentId);
+
+      const customer = await Customer.findOne({
+        _id: req.body.customerId,
+        businessId: { $in: allowedBusinessIds },
+      }).session(session);
+
       if (!customer) {
         throw new AppError("Customer not found", 404);
+      }
+
+      let crmSourceRef = null;
+      if (req.body.crmSourceRef && typeof req.body.crmSourceRef === "object") {
+        const sr = req.body.crmSourceRef;
+        if (sr.source && sr.sourceType && sr.sourceId && sr.billingPurpose) {
+          crmSourceRef = {
+            source: String(sr.source).trim(),
+            sourceType: String(sr.sourceType).trim(),
+            sourceId: String(sr.sourceId).trim(),
+            billingPurpose: String(sr.billingPurpose).trim(),
+            billingPeriod: String(sr.billingPeriod || "").trim(),
+          };
+
+          const existingInvoice = await Invoice.findOne({
+            "crmSourceRef.source": crmSourceRef.source,
+            "crmSourceRef.sourceType": crmSourceRef.sourceType,
+            "crmSourceRef.sourceId": crmSourceRef.sourceId,
+            "crmSourceRef.billingPurpose": crmSourceRef.billingPurpose,
+            "crmSourceRef.billingPeriod": crmSourceRef.billingPeriod,
+          }).session(session);
+
+          if (existingInvoice) {
+            throw new AppError(`An invoice (${existingInvoice.invoiceNumber}) already exists for this CRM billable source`, 409);
+          }
+        }
       }
 
       const rawItems = Array.isArray(req.body.lineItems) ? req.body.lineItems : [];
@@ -364,6 +399,7 @@ const createInvoice = asyncHandler(async (req, res) => {
               address: business.address,
               gstNumber: business.gstTaxId,
             },
+            crmSourceRef,
             lineItems: totals.lineItems,
             subtotal: totals.subtotal,
             totalTax: totals.totalTax,
@@ -422,6 +458,11 @@ const createInvoice = asyncHandler(async (req, res) => {
       message: "Invoice created successfully",
       data: invoice,
     });
+  } catch (error) {
+    if (error?.code === 11000 && (error.message?.includes("crmSourceRef") || error.keyPattern?.["crmSourceRef.source"])) {
+      throw new AppError("An invoice has already been issued for this CRM billable source", 409);
+    }
+    throw error;
   } finally {
     session.endSession();
   }

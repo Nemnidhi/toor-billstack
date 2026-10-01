@@ -54,15 +54,58 @@ const requestInvoiceHandoff = asyncHandler(async (req, res) => {
 });
 
 const consumeInvoiceHandoff = asyncHandler(async (req, res) => {
-  const { hashValue } = require("../services/integration.service");
-  const handoff = await require("../models/IntegrationHandoff").findOne({ tokenHash: hashValue(req.params.token), usedAt: null, expiresAt: { $gt: new Date() } });
-  if (!handoff) throw new (require("../utils/appError"))("Handoff is invalid or expired", 404);
-  const user = await require("../services/billing-entity.service").resolveEntityUser(req.identityUser, handoff.businessId);
-  const business = await require("../models/Business").findById(user.businessId);
-  if (!business || business.isDisabled) throw new (require("../utils/appError"))("Billing entity unavailable", 403);
-  const result = await resolveInvoiceHandoff({ token: req.params.token, businessId: user.businessId, userId: user._id });
+  const { hashValue, resolveInvoiceHandoff } = require("../services/integration.service");
+  const IntegrationHandoff = require("../models/IntegrationHandoff");
+  const Business = require("../models/Business");
+  const Membership = require("../models/BusinessMembership");
+  const AppError = require("../utils/appError");
+
+  const handoff = await IntegrationHandoff.findOne({
+    tokenHash: hashValue(req.params.token),
+    usedAt: null,
+    expiresAt: { $gt: new Date() },
+  });
+  if (!handoff) throw new AppError("Handoff is invalid or expired", 404);
+
+  let targetBusinessId = handoff.businessId;
+  if (handoff.billingContext?.billingEntityCode === "GOLDHAWK") {
+    let goldhawk = await Business.findOne({
+      billingParentId: handoff.businessId,
+      billingEntityCode: "GOLDHAWK",
+    });
+    if (!goldhawk) {
+      const { ensureGoldhawk } = require("../services/billing-entity.service");
+      goldhawk = await ensureGoldhawk(req.identityUser);
+    }
+    targetBusinessId = goldhawk._id;
+
+    // Ensure member has membership in Goldhawk if they are authorized on parent business
+    const existingMembership = await Membership.findOne({ userId: req.identityUser._id, businessId: targetBusinessId });
+    if (!existingMembership) {
+      const role = req.identityUser.role === "owner" ? "admin" : req.identityUser.role;
+      await Membership.create({ userId: req.identityUser._id, businessId: targetBusinessId, role });
+    }
+  }
+
+  const { resolveEntityUser } = require("../services/billing-entity.service");
+  const user = await resolveEntityUser(req.identityUser, targetBusinessId);
+  const business = await Business.findById(user.businessId);
+  if (!business || business.isDisabled) throw new AppError("Billing entity unavailable", 403);
+
+  const result = await resolveInvoiceHandoff({
+    token: req.params.token,
+    businessId: handoff.businessId,
+    userId: user._id,
+  });
+
   const { buildAuthPayload, signAccessToken } = require("../services/auth.service");
-  res.json({ data: { ...result, session: await buildAuthPayload({ user, business, accessToken: signAccessToken(user) }) } });
+  res.json({
+    data: {
+      ...result,
+      targetBusinessId,
+      session: await buildAuthPayload({ user, business, accessToken: signAccessToken(user) }),
+    },
+  });
 });
 
 const listIntegrationEvents = asyncHandler(async (req, res) => {

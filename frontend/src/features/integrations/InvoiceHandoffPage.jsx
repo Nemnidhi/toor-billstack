@@ -30,7 +30,13 @@ const InvoiceHandoffPage = () => {
         completedToken.current = token;
         if (context.session) authStore.getState().setSession(context.session);
         sessionStorage.removeItem("billstack-invoice-handoff-token");
-        sessionStorage.setItem("billstack-invoice-handoff-customer", context.customer._id);
+        sessionStorage.setItem("billstack-invoice-handoff-customer", context.customer?._id || context.customer?.id || "");
+        if (context.billingContext) {
+          sessionStorage.setItem("billstack-invoice-billing-context", JSON.stringify(context.billingContext));
+        }
+        if (context.existingInvoice) {
+          sessionStorage.setItem("billstack-invoice-existing-invoice", JSON.stringify(context.existingInvoice));
+        }
         navigate("/dashboard/invoices?action=create", { replace: true });
       })
       .catch((requestError) => {

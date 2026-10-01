@@ -125,13 +125,67 @@ const allowedReturnUrl = (value) => {
   return parsed.toString();
 };
 
+// Validates billingContext from CRM: checks types, strips unknown fields.
+// Returns null when absent so existing handoffs without context stay compatible.
+const normalizeBillingContext = (ctx) => {
+  if (!ctx || typeof ctx !== "object") return null;
+  const BILLING_TYPES = ["RESIDENTIAL", "COMMERCIAL", "COWORKING"];
+  const ENTITY_CODES = ["", "GOLDHAWK"];
+  const billingType = String(ctx.billingType || "").toUpperCase();
+  const billingEntityCode = String(ctx.billingEntityCode || "").toUpperCase();
+  if (!BILLING_TYPES.includes(billingType)) return null;
+  if (!ENTITY_CODES.includes(billingEntityCode)) return null;
+  // Validate entity code is consistent with billing type
+  if (billingType === "RESIDENTIAL" && billingEntityCode !== "GOLDHAWK") return null;
+  if ((billingType === "COMMERCIAL" || billingType === "COWORKING") && billingEntityCode !== "") return null;
+
+  // sourceRef: required for duplicate prevention
+  const sr = ctx.sourceRef && typeof ctx.sourceRef === "object" ? ctx.sourceRef : {};
+  const sourceRef = sr.sourceId && sr.source && sr.sourceType && sr.billingPurpose ? {
+    source: String(sr.source).toUpperCase().slice(0, 80),
+    sourceType: String(sr.sourceType).slice(0, 40),
+    sourceId: String(sr.sourceId).slice(0, 40),
+    billingPurpose: String(sr.billingPurpose).toUpperCase().slice(0, 40),
+    billingPeriod: String(sr.billingPeriod || "").slice(0, 10),
+  } : null;
+
+  const rawItems = Array.isArray(ctx.prefill?.lineItems) ? ctx.prefill.lineItems : [];
+  const lineItems = rawItems.slice(0, 20).map(item => ({
+    productName: String(item.productName || "").slice(0, 120),
+    quantity: Math.max(1, Number(item.quantity) || 1),
+    rate: Math.max(0, Number(item.rate) || 0),
+    rateReliable: Boolean(item.rateReliable),
+  }));
+
+  return {
+    billingType,
+    billingEntityCode,
+    sourceRef,
+    prefill: {
+      notes: String(ctx.prefill?.notes || "").slice(0, 500),
+      reference: String(ctx.prefill?.reference || "").slice(0, 200),
+      lineItems,
+    },
+  };
+};
+
 const createInvoiceHandoff = async ({ credential, payload }) => {
   if (!mongoose.isValidObjectId(payload.customerId)) throw new AppError("Valid customerId is required", 400);
   const customer = await Customer.findOne({ _id: payload.customerId, businessId: credential.businessId });
   if (!customer) throw new AppError("Customer not found for this integration", 404);
   const rawToken = crypto.randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + 3 * 60 * 1000);
-  await IntegrationHandoff.create({ businessId: credential.businessId, credentialId: credential._id, customerId: customer._id, tokenHash: hashValue(rawToken), purpose: "INVOICE_CREATE", returnUrl: allowedReturnUrl(payload.returnUrl), expiresAt });
+  const billingContext = normalizeBillingContext(payload.billingContext);
+  await IntegrationHandoff.create({
+    businessId: credential.businessId,
+    credentialId: credential._id,
+    customerId: customer._id,
+    tokenHash: hashValue(rawToken),
+    purpose: "INVOICE_CREATE",
+    returnUrl: allowedReturnUrl(payload.returnUrl),
+    expiresAt,
+    billingContext,
+  });
   const clientUrl = String(process.env.CLIENT_URL || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
   return { handoffUrl: `${clientUrl}/integration/invoice-handoff?token=${encodeURIComponent(rawToken)}`, expiresAt };
 };
@@ -144,7 +198,34 @@ const resolveInvoiceHandoff = async ({ token, businessId, userId }) => {
     { new: true }
   ).populate("customerId", "name email phone billingAddress gstNumber stateCode placeOfSupplyCode");
   if (!handoff) throw new AppError("Handoff token is invalid, expired, used, or belongs to another workspace", 410);
-  return { purpose: handoff.purpose, customer: handoff.customerId, returnUrl: handoff.returnUrl || "" };
+
+  let existingInvoice = null;
+  if (handoff.billingContext?.sourceRef?.sourceId) {
+    const sr = handoff.billingContext.sourceRef;
+    const inv = await Invoice.findOne({
+      "crmSourceRef.source": sr.source,
+      "crmSourceRef.sourceType": sr.sourceType,
+      "crmSourceRef.sourceId": sr.sourceId,
+      "crmSourceRef.billingPurpose": sr.billingPurpose,
+      "crmSourceRef.billingPeriod": sr.billingPeriod || "",
+    }).select("_id invoiceNumber grandTotal status createdAt");
+    if (inv) {
+      existingInvoice = {
+        _id: inv._id,
+        invoiceNumber: inv.invoiceNumber,
+        grandTotal: inv.grandTotal,
+        status: inv.status,
+      };
+    }
+  }
+
+  return {
+    purpose: handoff.purpose,
+    customer: handoff.customerId,
+    returnUrl: handoff.returnUrl || "",
+    billingContext: handoff.billingContext || null,
+    existingInvoice,
+  };
 };
 
 const generateApiKey = () => {
@@ -427,6 +508,7 @@ module.exports = {
   ingestExternalOrder,
   listCredentials,
   normalizeCustomerSyncPayload,
+  normalizeBillingContext,
   resolveInvoiceHandoff,
   revokeCredential,
   syncExternalCustomer,
