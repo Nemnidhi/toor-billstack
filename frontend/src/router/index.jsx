@@ -26,6 +26,7 @@ const InvoiceHandoffPage = lazy(() => import("../features/integrations/InvoiceHa
 const ProductsPage = lazy(() => import("../features/dashboard/pages/ProductsPage"));
 const PurchasesPage = lazy(() => import("../features/dashboard/pages/PurchasesPage"));
 const ReportsPage = lazy(() => import("../features/dashboard/pages/ReportsPage"));
+const AccountingReportsPage = lazy(() => import("../features/accounting/pages/AccountingReportsPage"));
 const SalesLifecyclePage = lazy(() => import("../features/dashboard/pages/SalesLifecyclePage"));
 const SubscriptionPage = lazy(() => import("../features/dashboard/pages/SubscriptionPage"));
 const SuppliersPage = lazy(() => import("../features/dashboard/pages/SuppliersPage"));

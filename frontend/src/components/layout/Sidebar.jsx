@@ -52,6 +52,7 @@ const navItems = [
   { label: "Documents & Approvals", to: "/dashboard/approvals", icon: FileText, matches: ["/dashboard/approvals"], group: "operations" },
   { label: "Expenses", to: "/dashboard/expenses", icon: ReceiptIndianRupee, matches: ["/dashboard/expenses"], group: "finance" },
   { label: "Reports / GST", to: "/dashboard/reports", icon: BarChart3, matches: ["/dashboard/reports"], group: "finance" },
+  { label: "Accounting", to: "/dashboard/accounting", icon: Landmark, matches: ["/dashboard/accounting"], roles: ["owner", "admin", "accountant"], group: "finance" },
   { label: "Communications", to: "/dashboard/communications", icon: BellRing, matches: ["/dashboard/communications"], group: "communications" },
   { label: "Team", to: "/dashboard/team", icon: Users, matches: ["/dashboard/team"], roles: ["owner", "admin"], group: "people" },
   { label: "HR", to: "/dashboard/hr/employees", icon: Users, matches: ["/dashboard/hr/employees"], requiresHR: true, group: "people" },
