@@ -1062,7 +1062,7 @@ const buildAccountantExportXlsxBuffer = (pack) => {
   addSheetFromCsv(pack.files.balanceSheetCsv, "Balance Sheet");
   addSheetFromCsv(pack.files.bankBookCsv, "Bank Book");
   addSheetFromCsv(pack.files.cashBookCsv, "Cash Book");
-  addSheetFromCsv(pack.files.ledgersCsv, "General Ledgers");
+  addSheetFromCsv(pack.files.generalLedgersCsv || pack.files.ledgersCsv, "General Ledgers");
   addSheetFromCsv(pack.files.salesRegisterCsv, "Sales Register");
   addSheetFromCsv(pack.files.expenseRegisterCsv, "Expense Register");
   addSheetFromCsv(pack.files.receivablesCsv, "Customer Receivables");
