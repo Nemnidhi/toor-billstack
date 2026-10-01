@@ -10,6 +10,7 @@ const { logoUploadDirectory, signatureUploadDirectory } = require("./config/uplo
 const { requestContext } = require("./middlewares/request-context.middleware");
 const { apiRateLimiter } = require("./middlewares/rate-limit.middleware");
 const { log } = require("./utils/logger");
+const accountingRoutes = require("./routes/accounting.routes");
 const auditRoutes = require("./routes/audit.routes");
 const authRoutes = require("./routes/auth.routes");
 const businessRoutes = require("./routes/business.routes");
@@ -106,6 +107,7 @@ app.use(
 app.use("/api", apiRateLimiter);
 
 app.use("/api/health", healthRoutes);
+app.use("/api/accounting", accountingRoutes);
 app.use("/api/audit-logs", auditRoutes);
 app.use("/api/hr", hrRoutes);
 app.use("/api/auth", authRoutes);

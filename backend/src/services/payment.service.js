@@ -14,6 +14,7 @@ const { fromMinorUnits, toMinorUnits } = require("../utils/money");
 const { log } = require("../utils/logger");
 const { dispatchPaymentRecordedAutomation } = require("./communication.service");
 const { createCustomerLedgerEntryOnce, createSupplierLedgerEntryOnce } = require("./ledger.service");
+const accountingService = require("./accounting.service");
 
 // ---------------------------------------------------------------------------
 // Helpers: net allocation accounting (session-aware, works inside transactions)
@@ -115,6 +116,9 @@ const createPayment = async ({ businessId, userId, payload }) => {
         }],
         { session }
       );
+      if (payment.direction === "RECEIVED") {
+        await accountingService.postPaymentReceivedJournalEntry({ payment, userId, session });
+      }
     });
     return payment;
   } catch (error) {
@@ -249,6 +253,7 @@ const allocatePayment = async ({ businessId, userId, paymentId, payload }) => {
           { businessId, customerId: updatedInvoice.customerId, eventType: "PAYMENT", amount, direction: "CREDIT", invoiceId: updatedInvoice._id, allocationId: allocation._id, sourceKey: `PAYMENT_ALLOCATION:${allocation._id}`, referenceNumber: payment.referenceNumber, notes: "Payment allocation", createdBy: userId },
           { session }
         );
+        await accountingService.postPaymentAllocatedJournalEntry({ allocation, payment, invoiceId: updatedInvoice._id, userId, session });
 
       } else {
         // ---------------------------------------------------------------
@@ -406,6 +411,7 @@ const reversePayment = async ({ businessId, userId, paymentId, reason = "" }) =>
       );
       if (payment.customerId) {
         await createCustomerLedgerEntryOnce({ businessId, customerId: payment.customerId, eventType: "REFUND", amount: payment.amount, direction: "DEBIT", paymentId: reversal._id, sourceKey: "PAYMENT_REVERSAL:" + reversal._id, notes, createdBy: userId }, { session });
+        await accountingService.postPaymentReversalJournalEntry({ reversalPayment: reversal, originalPayment: payment, userId, session });
       } else if (payment.supplierId) {
         await createSupplierLedgerEntryOnce({ businessId, supplierId: payment.supplierId, eventType: "REFUND", amount: payment.amount, direction: "CREDIT", paymentId: reversal._id, sourceKey: "PAYMENT_REVERSAL:" + reversal._id, notes, createdBy: userId }, { session });
       }
@@ -479,6 +485,7 @@ const reverseAllocation = async ({ businessId, userId, allocationId, amount, rea
           invoice.paymentStatus = balanceMinor === 0 ? "paid" : paidMinor > 0 ? "partial" : "unpaid";
           await invoice.save({ session });
           await createCustomerLedgerEntryOnce({ businessId, customerId: invoice.customerId, eventType: "REVERSAL", amount: requested, direction: "DEBIT", invoiceId: invoice._id, reversalId: reversal._id, sourceKey: `PAYMENT_ALLOCATION_REVERSAL:${reversal._id}`, notes: reason, createdBy: userId }, { session });
+          await accountingService.postPaymentAllocationReversalJournalEntry({ reversal, allocation, payment, userId, session });
         }
       } else if (allocation.purchaseId) {
         const purchase = await Purchase.findOne({ _id: allocation.purchaseId, businessId }).select("supplierId").session(session);

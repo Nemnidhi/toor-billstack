@@ -3,6 +3,7 @@ const Business = require("../models/Business");
 const Expense = require("../models/Expense");
 const Supplier = require("../models/Supplier");
 const AppError = require("../utils/appError");
+const accountingService = require("./accounting.service");
 const { EXPENSE_CATEGORIES } = require("../constants/expenses");
 const { buildInvoiceNumber } = require("../utils/invoice");
 const { calculateGst, validateStateCode } = require("../utils/gst");
@@ -107,6 +108,8 @@ const createExpense = async ({ businessId, userId, payload }) => {
       const normalized = await normalizeExpensePayload({ businessId, payload });
       const expenseNumber = await nextExpenseNumber({ businessId, session });
       [expense] = await Expense.create([{ businessId, expenseNumber, ...normalized, createdBy: userId, updatedBy: userId }], { session });
+      const business = await Business.findById(businessId).session(session);
+      await accountingService.postExpenseJournalEntry({ expense, business, userId, session });
     });
     return expense;
   } finally {

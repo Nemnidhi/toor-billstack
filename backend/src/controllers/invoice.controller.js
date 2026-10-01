@@ -16,6 +16,7 @@ const { generateInvoicePdfBuffer } = require("../utils/pdfInvoice");
 const { buildInvoiceNumber, buildInvoiceTotals } = require("../utils/invoice");
 const { buildGstSnapshot, validateGstin, validateStateCode } = require("../utils/gst");
 const { createCustomerLedgerEntryOnce } = require("../services/ledger.service");
+const accountingService = require("../services/accounting.service");
 const { log } = require("../utils/logger");
 const paymentService = require("../services/payment.service");
   const { applyFinancialRead, applyFinancialReads, hasDocumentAllocations, hasMigratedFinancialState, documentUpdateDecision, legacyPaymentWriteDecision } = require("../services/financial-read.service");
@@ -424,6 +425,7 @@ const createInvoice = asyncHandler(async (req, res) => {
       const invoice = created[0];
       createdInvoiceId = invoice._id;
       await createCustomerLedgerEntryOnce({ businessId: req.tenant.businessId, customerId: customer._id, eventType: "INVOICE", amount: invoice.grandTotal, direction: "DEBIT", invoiceId: invoice._id, sourceKey: `INVOICE:${invoice._id}:DEBIT`, createdBy: req.user._id }, { session });
+      await accountingService.postInvoiceJournalEntry({ invoice, business, userId: req.user._id, session });
       business.invoiceNumbering.nextSequence = sequence + 1;
       await business.save({ session });
 
@@ -671,6 +673,7 @@ const cancelInvoice = asyncHandler(async (req, res) => {
         invoice.balanceDue = 0;
         await invoice.save({ session });
         await createCustomerLedgerEntryOnce({ businessId: req.tenant.businessId, customerId: invoice.customerId, eventType: "REVERSAL", amount: invoice.grandTotal, direction: "CREDIT", invoiceId: invoice._id, sourceKey: `INVOICE:${invoice._id}:CANCEL`, createdBy: req.user._id, notes: "Invoice cancellation" }, { session });
+        await accountingService.postInvoiceCancellationJournalEntry({ invoice, userId: req.user._id, session });
 
       if (customer) {
         await syncCustomerInvoiceHistory({
@@ -812,6 +815,7 @@ const reissueInvoice = asyncHandler(async (req, res) => {
       if (business.invoiceNumbering) { business.invoiceNumbering.nextSequence = sequence + 1; await business.save({ session }); }
       original.reissuedInvoiceId = reissuedInvoice._id; original.reissuedInvoiceNumber = reissuedInvoice.invoiceNumber; original.reissueReason = reason; await original.save({ session });
       await createCustomerLedgerEntryOnce({ businessId: req.tenant.businessId, customerId: customer._id, eventType: "INVOICE", amount: totals.grandTotal, direction: "DEBIT", invoiceId: reissuedInvoice._id, sourceKey: "INVOICE:" + reissuedInvoice._id + ":ISSUE", createdBy: req.user._id, notes: "Reissue replacing " + original.invoiceNumber }, { session });
+      await accountingService.postInvoiceJournalEntry({ invoice: reissuedInvoice, business, userId: req.user._id, session });
       await syncCustomerInvoiceHistory({ customer, businessId: req.tenant.businessId, session });
     });
     res.status(201).json({ message: "Invoice reissued successfully", data: reissuedInvoice });
