@@ -32,6 +32,10 @@ import {
 } from "../api";
 import { authStore } from "../../../store/authStore";
 import { money } from "../../dashboard/reportPresentation";
+import BackfillTab from "./BackfillTab";
+import BankAccountsTab from "./BankAccountsTab";
+import ReconciliationTab from "./ReconciliationTab";
+import { ShieldCheck } from "lucide-react";
 
 const AccountingReportsPage = () => {
   const { user, business } = authStore();
@@ -269,6 +273,9 @@ const AccountingReportsPage = () => {
           { key: "trial_balance", label: "Trial Balance", icon: BookOpen },
           { key: "bank_book", label: "Bank & Cash Book", icon: Landmark },
           { key: "ledger", label: "Account Ledger", icon: FileText },
+          { key: "backfill", label: "Historical Backfill", icon: ShieldCheck },
+          { key: "bank_accounts", label: "Bank Accounts", icon: Building2 },
+          { key: "reconciliation", label: "Bank Reconciliation", icon: CheckCircle2 },
           { key: "export", label: "Accountant Export Pack", icon: Download },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -750,6 +757,21 @@ const AccountingReportsPage = () => {
             </div>
           )}
         </div>
+      )}
+
+      {/* TAB: HISTORICAL BACKFILL */}
+      {activeTab === "backfill" && (
+        <BackfillTab selectedEntity={selectedEntity} onBackfillComplete={loadAll} />
+      )}
+
+      {/* TAB: BANK ACCOUNTS */}
+      {activeTab === "bank_accounts" && (
+        <BankAccountsTab selectedEntity={selectedEntity} />
+      )}
+
+      {/* TAB: BANK RECONCILIATION */}
+      {activeTab === "reconciliation" && (
+        <ReconciliationTab selectedEntity={selectedEntity} />
       )}
 
       {/* TAB 7: ACCOUNTANT EXPORT PACK */}

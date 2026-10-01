@@ -54,9 +54,23 @@ const getHistoricalWarning = async ({ businessId, fromDate, toDate }) => {
   const unpostedPayments = Math.max(0, paymentCount - paymentJeCount);
   const unpostedExpenses = Math.max(0, expenseCount - expenseJeCount);
 
-  const hasUnpostedLegacyData = unpostedInvoices > 0 || unpostedPayments > 0 || unpostedExpenses > 0;
+  const totalCandidates = invoiceCount + paymentCount + expenseCount;
+  const totalPosted = invoiceJeCount + paymentJeCount + expenseJeCount;
+  const unpostedTotal = unpostedInvoices + unpostedPayments + unpostedExpenses;
+
+  let status = "COMPLETE";
+  if (totalCandidates > 0 && totalPosted === 0) {
+    status = "NOT_BACKFILLED";
+  } else if (unpostedTotal > 0 && totalPosted > 0) {
+    status = "PARTIAL";
+  } else if (unpostedTotal > 0) {
+    status = "NOT_BACKFILLED";
+  }
+
+  const hasUnpostedLegacyData = unpostedTotal > 0;
 
   return {
+    status, // "COMPLETE", "PARTIAL", "NOT_BACKFILLED"
     hasUnpostedLegacyData,
     warning: hasUnpostedLegacyData
       ? "Historical accounting data incomplete / backfill required"
@@ -68,7 +82,12 @@ const getHistoricalWarning = async ({ businessId, fromDate, toDate }) => {
       invoices: unpostedInvoices,
       payments: unpostedPayments,
       expenses: unpostedExpenses,
-      total: unpostedInvoices + unpostedPayments + unpostedExpenses,
+      total: unpostedTotal,
+    },
+    counts: {
+      totalCandidates,
+      totalPosted,
+      unpostedTotal,
     },
   };
 };

@@ -61,7 +61,7 @@ const journalEntrySchema = new mongoose.Schema(
     },
     sourceType: {
       type: String,
-      enum: ["INVOICE", "PAYMENT", "PAYMENT_ALLOCATION", "EXPENSE", "MANUAL", "REVERSAL"],
+      enum: ["INVOICE", "PAYMENT", "PAYMENT_ALLOCATION", "EXPENSE", "MANUAL", "REVERSAL", "OPENING_BALANCE"],
       required: true,
       immutable: true,
     },

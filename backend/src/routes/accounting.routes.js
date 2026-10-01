@@ -14,6 +14,17 @@ const {
   getHistoricalWarning,
   exportAccountantPack,
 } = require("../controllers/accounting-reports.controller");
+const {
+  runBackfill,
+  postOpeningBalances,
+  getBankAccounts,
+  createBankAccount,
+  updateBankAccount,
+  importBankStatement,
+  getReconciliation,
+  confirmReconciliationMatch,
+  unmatchReconciliation,
+} = require("../controllers/bank-reconciliation.controller");
 const authMiddleware = require("../middlewares/auth.middleware");
 const { permit } = require("../middlewares/role.middleware");
 const { authorizeAccountingReport } = require("../middlewares/accounting-access.middleware");
@@ -38,5 +49,20 @@ router.get("/reports/bank-book", authorizeAccountingReport, getBankBook);
 router.get("/reports/cash-book", authorizeAccountingReport, getCashBook);
 router.get("/reports/historical-warning", authorizeAccountingReport, getHistoricalWarning);
 router.get("/reports/export-pack", authorizeAccountingReport, exportAccountantPack);
+
+// Historical Accounting Backfill & Opening Balances
+router.post("/backfill", authorizeAccountingReport, runBackfill);
+router.post("/opening-balances", authorizeAccountingReport, postOpeningBalances);
+
+// Bank Accounts Management
+router.get("/bank-accounts", authorizeAccountingReport, getBankAccounts);
+router.post("/bank-accounts", authorizeAccountingReport, createBankAccount);
+router.put("/bank-accounts/:id", authorizeAccountingReport, updateBankAccount);
+
+// Bank Statement Import & Reconciliation
+router.post("/bank-statements/import", authorizeAccountingReport, importBankStatement);
+router.get("/bank-reconciliation", authorizeAccountingReport, getReconciliation);
+router.post("/bank-reconciliation/match", authorizeAccountingReport, confirmReconciliationMatch);
+router.post("/bank-reconciliation/unmatch", authorizeAccountingReport, unmatchReconciliation);
 
 module.exports = router;

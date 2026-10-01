@@ -53,3 +53,49 @@ export const downloadExportCsv = async (params = {}) => {
   });
   return response.data;
 };
+
+
+export const runBackfillRequest = async (payload) => {
+  const response = await api.post("/accounting/backfill", payload);
+  return response.data.data;
+};
+
+export const postOpeningBalancesRequest = async (payload) => {
+  const response = await api.post("/accounting/opening-balances", payload);
+  return response.data.data;
+};
+
+export const getBankAccountsRequest = async (params = {}) => {
+  const response = await api.get("/accounting/bank-accounts", { params });
+  return response.data.data;
+};
+
+export const createBankAccountRequest = async (payload) => {
+  const response = await api.post("/accounting/bank-accounts", payload);
+  return response.data.data;
+};
+
+export const updateBankAccountRequest = async (id, payload) => {
+  const response = await api.put("/accounting/bank-accounts/" + id, payload);
+  return response.data.data;
+};
+
+export const importBankStatementRequest = async (payload) => {
+  const response = await api.post("/accounting/bank-statements/import", payload);
+  return response.data.data;
+};
+
+export const getReconciliationRequest = async (params = {}) => {
+  const response = await api.get("/accounting/bank-reconciliation", { params });
+  return response.data.data;
+};
+
+export const confirmMatchRequest = async (payload) => {
+  const response = await api.post("/accounting/bank-reconciliation/match", payload);
+  return response.data.data;
+};
+
+export const unmatchRequest = async (payload) => {
+  const response = await api.post("/accounting/bank-reconciliation/unmatch", payload);
+  return response.data.data;
+};
