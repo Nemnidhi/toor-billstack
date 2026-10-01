@@ -330,6 +330,7 @@ const ingestExternalOrder = async ({ credential, payload }) => {
         discountType: item.discountType === "amount" ? "amount" : "percent",
         discountValue: Number(item.discountValue || 0),
       }));
+      if (business.billingEntityCode === "GOLDHAWK") lineItems.forEach(line => { line.taxRate = 0; });
       const totals = buildInvoiceTotals({ lineItems, amountPaid: 0 });
       if (business.gstConfiguration?.enabled) {
         if (!validateGstin(business.gstConfiguration.gstin || business.gstTaxId) || !validateStateCode(business.gstConfiguration.stateCode)) throw new AppError("Invalid business GST configuration", 400);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import RouteFallback from "../../components/ui/RouteFallback";
 import { authStore } from "../../store/authStore";
@@ -13,8 +13,10 @@ const InvoiceHandoffPage = () => {
   const businessId = authStore((state) => state.business?._id || state.business?.id);
   const [error, setError] = useState("");
   const token = params.get("token") || "";
+  const completedToken = useRef("");
 
   useEffect(() => {
+    if (completedToken.current === token && token) return;
     if (!token) { setError("This invoice handoff link is invalid."); return; }
     if (!accessToken) {
       sessionStorage.setItem("billstack-invoice-handoff-token", token);
@@ -25,6 +27,8 @@ const InvoiceHandoffPage = () => {
     consumeHandoffOnce({ token, userId, businessId, request: resolveInvoiceHandoffRequest })
       .then((context) => {
         if (!active) return;
+        completedToken.current = token;
+        if (context.session) authStore.getState().setSession(context.session);
         sessionStorage.removeItem("billstack-invoice-handoff-token");
         sessionStorage.setItem("billstack-invoice-handoff-customer", context.customer._id);
         navigate("/dashboard/invoices?action=create", { replace: true });

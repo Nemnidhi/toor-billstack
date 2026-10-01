@@ -58,9 +58,10 @@ const borderLayout = {
 };
 
 const buildInvoicePdfDefinition = ({ invoice, business }) => {
+  business = invoice.sellerSnapshot || require("../services/seller-snapshot.service").legacySellerSnapshot(business, invoice);
   const snapshot = invoice.gstSnapshot || {};
   const customer = invoice.customerDetails || {};
-  const businessGstin = compact(snapshot.gstin || invoice.businessDetails?.gstNumber || business.gstTaxId);
+  const businessGstin = compact(invoice.sellerSnapshot ? business.gstTaxId : snapshot.gstin || invoice.businessDetails?.gstNumber || business.gstTaxId);
   const customerGstin = compact(customer.gstNumber);
   const placeOfSupply = compact(snapshot.placeOfSupply || states[snapshot.placeOfSupplyCode] || customer.state);
   const logo = loadUploadedImage(business.logoUrl);
@@ -169,6 +170,11 @@ const buildInvoicePdfDefinition = ({ invoice, business }) => {
           ] }],
         ] }, layout: borderLayout,
       },
+      ...(business.bankDetails?.accountNumber || business.bankDetails?.upiId ? [{ margin: [0, 10, 0, 0], stack: [
+        { text: "Payment details", bold: true },
+        optionalLine("Account holder", business.bankDetails.accountName), optionalLine("Bank", business.bankDetails.bankName),
+        optionalLine("Account number", business.bankDetails.accountNumber), optionalLine("IFSC", business.bankDetails.ifscCode), optionalLine("UPI", business.bankDetails.upiId),
+      ].filter(Boolean) }] : []),
       ...((compact(invoice.termsAndConditions) || compact(business.invoiceTerms)) ? [{ text: "Terms & Conditions", bold: true, margin: [0, 10, 0, 3] }, { text: compact(invoice.termsAndConditions) || compact(business.invoiceTerms), fontSize: 8.5 }] : []),
     ],
     defaultStyle: { fontSize: 9, color: "#111827" },

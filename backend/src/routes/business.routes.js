@@ -22,6 +22,11 @@ const router = express.Router();
 
 router.use(authMiddleware, tenantMiddleware);
 
+const entities = require("../controllers/billing-entity.controller");
+router.get("/billing-entities", entities.list);
+router.post("/billing-entities", entities.create);
+router.get("/billing-entities/members", entities.members);
+router.put("/billing-entities/members", entities.grant);
 router.get("/me", getCurrentBusiness);
 router.get("/plan-recommendation", getPlanRecommendation);
 router.post("/sample-data", permit("owner", "admin"), createBusinessSampleData);

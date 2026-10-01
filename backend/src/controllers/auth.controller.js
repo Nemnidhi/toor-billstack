@@ -339,6 +339,10 @@ const refresh = asyncHandler(async (req, res) => {
   }
   business = await ensureSelfHostedBusinessProfile(business);
 
+  const scopedUser = await require("../services/billing-entity.service").resolveEntityUser(user, req.headers["x-business-id"]);
+  const scopedBusiness = await Business.findById(scopedUser.businessId);
+  if (!scopedBusiness || scopedBusiness.isDisabled) throw new AppError("Billing entity unavailable", 403);
+
   const nextRefreshToken = await issueRefreshToken(user, {
     familyId: tokenRecord.familyId,
     ipAddress: req.ip,
@@ -349,12 +353,12 @@ const refresh = asyncHandler(async (req, res) => {
     replacedByToken: nextRefreshToken,
   });
 
-  const nextAccessToken = signAccessToken(user);
+  const nextAccessToken = signAccessToken(scopedUser);
 
   res.cookie(refreshCookieName, nextRefreshToken, refreshCookieOptions);
   res.status(200).json({
     message: "Token refreshed",
-    data: await buildAuthPayload({ user, business, accessToken: nextAccessToken }),
+    data: await buildAuthPayload({ user: scopedUser, business: scopedBusiness, accessToken: nextAccessToken }),
   });
 });
 

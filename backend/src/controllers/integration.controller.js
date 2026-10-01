@@ -54,8 +54,15 @@ const requestInvoiceHandoff = asyncHandler(async (req, res) => {
 });
 
 const consumeInvoiceHandoff = asyncHandler(async (req, res) => {
-  const result = await resolveInvoiceHandoff({ token: req.params.token, businessId: req.tenant.businessId, userId: req.user._id });
-  res.json({ data: result });
+  const { hashValue } = require("../services/integration.service");
+  const handoff = await require("../models/IntegrationHandoff").findOne({ tokenHash: hashValue(req.params.token), usedAt: null, expiresAt: { $gt: new Date() } });
+  if (!handoff) throw new (require("../utils/appError"))("Handoff is invalid or expired", 404);
+  const user = await require("../services/billing-entity.service").resolveEntityUser(req.identityUser, handoff.businessId);
+  const business = await require("../models/Business").findById(user.businessId);
+  if (!business || business.isDisabled) throw new (require("../utils/appError"))("Billing entity unavailable", 403);
+  const result = await resolveInvoiceHandoff({ token: req.params.token, businessId: user.businessId, userId: user._id });
+  const { buildAuthPayload, signAccessToken } = require("../services/auth.service");
+  res.json({ data: { ...result, session: await buildAuthPayload({ user, business, accessToken: signAccessToken(user) }) } });
 });
 
 const listIntegrationEvents = asyncHandler(async (req, res) => {

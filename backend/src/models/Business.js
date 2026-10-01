@@ -128,6 +128,8 @@ const businessProfileSchema = new mongoose.Schema(
 
 const businessSchema = new mongoose.Schema(
   {
+    billingParentId: { type: mongoose.Schema.Types.ObjectId, ref: "Business", default: null, immutable: true },
+    billingEntityCode: { type: String, enum: ["", "GOLDHAWK"], default: "", immutable: true },
     name: {
       type: String,
       required: true,
@@ -267,4 +269,18 @@ const businessSchema = new mongoose.Schema(
   }
 );
 
+businessSchema.index({ billingParentId: 1, billingEntityCode: 1 }, { unique: true, partialFilterExpression: { billingParentId: { $type: "objectId" } } });
+businessSchema.pre("save", async function () {
+  if (this.billingEntityCode === "GOLDHAWK") {
+    this.gstConfiguration = { enabled: false, gstin: "", stateCode: "", state: "" };
+    this.gstTaxId = "";
+    this.businessProfile.gstRegistered = false;
+    this.defaultTaxSettings = { taxName: "", taxRate: 0, taxMode: "exclusive" };
+  }
+  const sellerFields = ["name", "address", "email", "billingEmail", "phone", "logoUrl", "signatureUrl", "gstTaxId", "gstConfiguration", "bankDetails", "invoiceTerms"];
+  if (!this.isNew && sellerFields.some(f => this.isModified(f))) {
+    const previous = await this.constructor.findById(this._id).session(this.$session());
+    if (previous) await require("../services/seller-snapshot.service").freezeLegacySellers(previous, this.$session());
+  }
+});
 module.exports = mongoose.model("Business", businessSchema);

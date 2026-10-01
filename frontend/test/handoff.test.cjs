@@ -13,18 +13,20 @@ function load(relative, stubs = {}, globals = {}) {
   return module.exports;
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));
-function harness(loggedIn = true, fail = false) {
+function harness(loggedIn = true, fail = false, switchEntity = false) {
+  const completedRef = { current: "" };
   const effects = [], errors = [], navigations = [], storage = new Map();
   const sessionStorage = { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) };
   let session = { accessToken: loggedIn ? 'session-a' : '', user: { id: 'user-a' }, business: { id: 'business-a' } }, calls = 0;
   const cache = load('features/integrations/handoffRequest.js');
   const authStore = selector => selector(session);
+  authStore.getState = () => ({ setSession: value => { session = { ...session, ...value }; } });
   const Component = load('features/integrations/InvoiceHandoffPage.jsx', {
-    react: { useEffect: effect => effects.push(effect), useState: () => ['', error => errors.push(error)] },
+    react: { useRef: () => completedRef, useEffect: effect => effects.push(effect), useState: () => ['', error => errors.push(error)] },
     'react-router-dom': { useNavigate: () => path => navigations.push(path), useSearchParams: () => [new URLSearchParams('token=test-token')] },
     '../../components/ui/RouteFallback': () => null,
     '../../store/authStore': { authStore },
-    '../auth/api': { resolveInvoiceHandoffRequest: async () => { calls++; if (fail) throw { response: { status: 410, data: { message: 'Expired or used' } } }; return { customer: { _id: 'customer-a' } }; } },
+    '../auth/api': { resolveInvoiceHandoffRequest: async () => { calls++; if (fail) throw { response: { status: 410, data: { message: 'Expired or used' } } }; return { customer: { _id: 'customer-a' }, ...(switchEntity ? { session: { ...session, business: { id: 'business-b' } } } : {}) }; } },
     './handoffRequest': cache,
   }, { sessionStorage }).default;
   const render = () => { Component(); return effects.at(-1); };
@@ -97,4 +99,12 @@ test('handoff cache never shares context between businesses/users and clears on 
   assert.equal(await cache.consumeHandoffOnce({ ...args, businessId: 'b2' }), 2);
   assert.equal(await cache.consumeHandoffOnce({ ...args, userId: 'u2' }), 3);
   cache.clearHandoffRequests(); assert.equal(await cache.consumeHandoffOnce(args), 4); cache.clearHandoffRequests();
+});
+
+test('switching to the handoff entity cannot consume the token again after session hydration', async () => {
+  const h = harness(true, false, true);
+  h.render()(); await flush();
+  h.render()(); await flush();
+  assert.equal(h.calls(), 1); assert.equal(h.navigations.length, 1); assert.equal(h.errors.length, 0);
+  h.cache.clearHandoffRequests();
 });

@@ -31,13 +31,15 @@ const authMiddleware = asyncHandler(async (req, _res, next) => {
     throw new AppError("This user account has been deactivated", 403);
   }
 
-  req.user = user;
-  const business = await Business.findById(user.businessId);
+  req.identityUser = user;
+  req.user = await require("../services/billing-entity.service").resolveEntityUser(user, req.headers["x-business-id"] || decoded.businessId);
+  const business = await Business.findById(req.user.businessId);
+  if (!business) throw new AppError("Business not found", 403);
   if (business?.isDisabled) {
     throw new AppError("This business has been disabled by the platform owner", 403);
   }
   req.subscription = await ensureBusinessSubscription({
-    businessId: user.businessId,
+    businessId: req.user.businessId,
     planCode: business?.planCode || "free",
   });
   req.business = business;

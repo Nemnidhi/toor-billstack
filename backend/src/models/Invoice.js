@@ -122,6 +122,7 @@ const invoiceSchema = new mongoose.Schema(
       type: invoicePartySnapshotSchema,
       default: () => ({}),
     },
+    sellerSnapshot: { type: mongoose.Schema.Types.Mixed, default: null, immutable: true },
     businessDetails: {
       type: invoicePartySnapshotSchema,
       default: () => ({}),
@@ -171,4 +172,13 @@ invoiceSchema.index({ businessId: 1, customerId: 1, invoiceDate: -1 });
 invoiceSchema.index({ businessId: 1, status: 1, invoiceDate: -1 });
 invoiceSchema.index({ businessId: 1, isSampleData: 1 });
 
+invoiceSchema.pre("save", async function () {
+  const business = await require("./Business").findById(this.businessId).session(this.$session());
+  if (this.isNew) {
+    if (business) this.sellerSnapshot = require("../services/seller-snapshot.service").sellerSnapshot(business);
+  }
+  if (business?.billingEntityCode === "GOLDHAWK" && (this.totalTax !== 0 || this.lineItems.some(line => line.taxRate || line.tax || line.taxAmount) || this.gstSnapshot)) {
+    throw new Error("Goldhawk invoices must not contain GST");
+  }
+});
 module.exports = mongoose.model("Invoice", invoiceSchema);

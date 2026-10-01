@@ -31,7 +31,7 @@ api.interceptors.request.use((config) => {
     config.headers.Authorization = `Bearer ${accessToken}`;
   }
 
-  if (businessId) {
+  if (businessId && !config.headers["x-business-id"]) {
     config.headers["x-business-id"] = businessId;
   }
 
@@ -79,7 +79,7 @@ api.interceptors.response.use(
       const response = await axios.post(
         `${api.defaults.baseURL}/auth/refresh`,
         {},
-        { withCredentials: true }
+        { withCredentials: true, headers: { "x-business-id": originalRequest.headers["x-business-id"] || authStore.getState().business?.id } }
       );
 
       const nextToken = response.data.data.accessToken;

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import BillingEntitySettings from "../../workspace/BillingEntitySettings";
 import gstStates from "../../../../../shared/indian-gst-states.json";
 import {
   communicationSummaryRequest,
@@ -352,7 +353,8 @@ const BusinessSettingsPage = () => {
 
   return (
     <div className="space-y-6">
-      <header><h2 className="text-2xl font-semibold">Business Settings</h2><p className="mt-1 text-sm text-slate-500">Manage your company, GST, invoices and payment details.</p></header>
+      <BillingEntitySettings />
+      <header><h2 className="text-2xl font-semibold">Billing Company Settings</h2><p className="mt-1 text-sm text-slate-500">Manage your company, GST, invoices and payment details.</p></header>
       <nav aria-label="Settings sections" className="flex flex-wrap gap-2">
         {["Business Profile", "GST & Tax", "Invoice & Payment", "Branding", "Communications", ...(visibility.inventory ? ["Inventory"] : [])].map(label => <button key={label} type="button" onClick={() => { setSection(label); setSaveError(""); setFieldErrors({}); setSaved(false); }} aria-pressed={section === label} className={section === label ? "rounded-xl bg-brand-600 px-3 py-2 text-sm font-semibold text-white" : "rounded-xl border px-3 py-2 text-sm"}>{label}</button>)}
       </nav>
@@ -361,16 +363,16 @@ const BusinessSettingsPage = () => {
           <h3 className="mb-4 text-lg font-semibold">{section}</h3>
           <div className="grid gap-4 sm:grid-cols-2">
             {section === "Inventory" && visibility.inventory && <label className="flex items-center gap-2"><input type="checkbox" name="allowNegativeStock" checked={form.allowNegativeStock} onChange={handleChange} />Allow negative stock when recording stock out</label>}
-            {(section === "Business Profile" ? [["name", "Business name"], ["industry", "Industry"], ["email", "Business email"], ["billingEmail", "Billing email"], ["phone", "Phone"], ["address", "Address"]] : section === "Invoice & Payment" ? [["invoicePrefix", "Invoice prefix"], ["invoiceNumberingFormat", "Invoice numbering format"], ["bankAccountName", "Account holder name"], ["bankName", "Bank name"], ["bankAccountNumber", "Account number"], ["bankIfscCode", "IFSC"], ["bankUpiId", "UPI ID"]] : []).map(([name, label]) => <label key={name} className="min-w-0"><span className="mb-1 block text-sm font-medium">{label}</span><input name={name} type={name.toLowerCase().includes("email") ? "email" : "text"} value={form[name]} readOnly={name === "industry" && isRealEstateSelfHosted} onChange={handleChange} className="w-full rounded-xl border bg-transparent px-3 py-2.5 text-sm" />{fieldErrors[name] && <span className="mt-1 block text-xs text-rose-600">{fieldErrors[name]}</span>}</label>)}
+            {(section === "Business Profile" ? [["name", "Legal billing company name"], ["industry", "Industry"], ["email", "Business email"], ["billingEmail", "Billing email"], ["phone", "Phone"], ["address", "Address"]] : section === "Invoice & Payment" ? [["invoicePrefix", "Invoice prefix"], ["invoiceNumberingFormat", "Invoice numbering format"], ["bankAccountName", "Account holder name"], ["bankName", "Bank name"], ["bankAccountNumber", "Account number"], ["bankIfscCode", "IFSC"], ["bankUpiId", "UPI ID"]] : []).map(([name, label]) => <label key={name} className="min-w-0"><span className="mb-1 block text-sm font-medium">{label}</span><input name={name} type={name.toLowerCase().includes("email") ? "email" : "text"} value={form[name]} readOnly={name === "industry" && isRealEstateSelfHosted} onChange={handleChange} className="w-full rounded-xl border bg-transparent px-3 py-2.5 text-sm" />{fieldErrors[name] && <span className="mt-1 block text-xs text-rose-600">{fieldErrors[name]}</span>}</label>)}
             {section === "GST & Tax" && <>
-              <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" name="gstEnabled" checked={form.gstEnabled} onChange={handleChange} />GST Registered</label>
+              <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" name="gstEnabled" disabled={business?.billingEntityCode === "GOLDHAWK"} checked={form.gstEnabled} onChange={handleChange} />GST Registered</label>
               {form.gstEnabled && <>
                 <label><span className="mb-1 block text-sm">GSTIN</span><input name="gstConfigurationGstin" value={form.gstConfigurationGstin} maxLength={15} onChange={handleChange} className="w-full rounded-xl border bg-transparent px-3 py-2.5 text-sm" /></label>
                 <label><span className="mb-1 block text-sm">State</span><select name="gstStateCode" value={form.gstStateCode} onChange={handleChange} className="w-full rounded-xl border bg-transparent px-3 py-2.5 text-sm"><option value="">Select state</option>{Object.entries(gstStates).map(([code, state]) => <option key={code} value={code}>{state} ({code})</option>)}</select></label>
                 <label><span className="mb-1 block text-sm">State Code</span><input value={form.gstStateCode} readOnly className="w-full rounded-xl border bg-transparent px-3 py-2.5 text-sm" /></label>
               </>}
-              <label><span className="mb-1 block text-sm">Default GST Rate</span><select name="taxRate" value={form.taxRate} onChange={handleChange} className="w-full rounded-xl border bg-transparent px-3 py-2.5 text-sm">{Array.from(new Set([0, 5, 12, 18, 28, Number(form.taxRate)])).sort((a,b) => a-b).map(rate => <option key={rate} value={rate}>{rate}%</option>)}</select></label>
-              <div><p className="text-sm font-medium">Tax calculation: Tax Exclusive</p><p className="mt-1 text-xs text-slate-500">GST is added to the entered rate. Each item uses its own GST rate.</p></div>
+              <label><span className="mb-1 block text-sm">Default GST Rate</span><select name="taxRate" disabled={business?.billingEntityCode === "GOLDHAWK"} value={form.taxRate} onChange={handleChange} className="w-full rounded-xl border bg-transparent px-3 py-2.5 text-sm">{Array.from(new Set([0, 5, 12, 18, 28, Number(form.taxRate)])).sort((a,b) => a-b).map(rate => <option key={rate} value={rate}>{rate}%</option>)}</select></label>
+              <div><p className="text-sm font-medium">Tax calculation: Tax Exclusive</p><p className="mt-1 text-xs text-slate-500">{business?.billingEntityCode === "GOLDHAWK" ? "Goldhawk invoices are non-GST. Tax is always zero." : "GST is added to the entered rate. Each item uses its own GST rate."}</p></div>
             </>}
             {section === "Invoice & Payment" && <label className="sm:col-span-2"><span className="mb-1 block text-sm">Invoice terms</span><textarea name="invoiceTerms" rows={3} value={form.invoiceTerms} onChange={handleChange} className="w-full rounded-xl border bg-transparent px-3 py-2.5 text-sm" /></label>}
             {section === "Branding" && <>

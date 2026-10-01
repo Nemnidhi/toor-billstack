@@ -263,7 +263,7 @@ const InvoiceDetailPage = () => {
 
   const [paymentLabel, paymentClass] = status(invoice);
   const customer = invoice.customerId || invoice.customerDetails || {};
-  const business = invoice.businessDetails || {};
+  const business = invoice.sellerSnapshot ? { ...invoice.sellerSnapshot, gstNumber: invoice.sellerSnapshot.gstTaxId } : invoice.businessDetails || {};
   const isRealEstateSelfHosted = isRealEstateSelfHostedWorkspace(null, workspaceBusiness);
   const hasNotesOrTerms = Boolean(invoice.notes || invoice.termsAndConditions);
   const canManagePayments = ["owner", "admin", "accountant"].includes(user?.role);

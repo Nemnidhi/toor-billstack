@@ -18,6 +18,9 @@ const serializeBusinessWithPlan = (business, subscription = null) => {
   return {
     id: business._id,
     name: business.name,
+    billingEntityCode: business.billingEntityCode || "",
+    billingParentId: business.billingParentId || null,
+    gstConfiguration: business.gstConfiguration,
     industry: business.industry,
     billingEmail: business.billingEmail,
     email: business.email,

@@ -3,8 +3,9 @@ const { buildGstSnapshot } = require("./gst");
 const AppError = require("./appError");
 const round = value => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 const buildTaxDocument = ({ business, counterparty, products = [], placeOfSupplyCode, ...input }) => {
+  if (business.billingEntityCode === "GOLDHAWK") input.lineItems = input.lineItems.map(line => ({ ...line, taxRate: 0, gstClassification: "EXEMPT" }));
   const totals = buildInvoiceTotals(input);
-  if (!business.gstConfiguration?.enabled) return { totals, gstSnapshot: null };
+  if (business.billingEntityCode === "GOLDHAWK" || !business.gstConfiguration?.enabled) return { totals, gstSnapshot: null };
   if (business.defaultTaxSettings?.taxMode === "inclusive") throw new AppError("Tax Inclusive is not supported. Select Tax Exclusive in GST & Tax settings before issuing.", 400);
   const gstSnapshot = buildGstSnapshot({ business, counterparty, products, placeOfSupplyCode, lineItems: totals.lineItems });
   totals.lineItems = totals.lineItems.map((line, index) => ({ ...line, taxableAmount: gstSnapshot.lines[index].taxableValue, tax: gstSnapshot.lines[index].totalTax, taxAmount: gstSnapshot.lines[index].totalTax, itemTotal: round(gstSnapshot.lines[index].taxableValue + gstSnapshot.lines[index].totalTax) }));

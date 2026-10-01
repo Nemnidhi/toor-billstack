@@ -12,6 +12,7 @@ const path = require("path");
 
 const removeStoredBrandAsset = async (assetUrl) => {
   if (!assetUrl) return;
+  if (await require("../models/Invoice").exists({ $or: [{ "sellerSnapshot.logoUrl": assetUrl }, { "sellerSnapshot.signatureUrl": assetUrl }] })) return;
   const absolutePath = path.resolve(process.cwd(), String(assetUrl).replace(/^\/+/, ""));
   const uploadRoot = path.resolve(process.cwd(), "uploads");
   if (!absolutePath.startsWith(`${uploadRoot}${path.sep}`)) return;
@@ -102,7 +103,7 @@ const updateBusinessSetup = asyncHandler(async (req, res) => {
   business.phone = req.body.phone?.trim() || "";
   business.address = req.body.address?.trim() || "";
   business.gstTaxId = req.body.gstTaxId?.trim().toUpperCase() || "";
-  const gstEnabled = req.body.gstEnabled === true || req.body.gstEnabled === "true";
+  const gstEnabled = business.billingEntityCode !== "GOLDHAWK" && (req.body.gstEnabled === true || req.body.gstEnabled === "true");
   const gstin = (req.body.gstConfigurationGstin || req.body.gstTaxId || "").trim().toUpperCase();
   const stateCode = (req.body.gstStateCode || "").trim();
   try {
