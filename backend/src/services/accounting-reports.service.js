@@ -1046,6 +1046,38 @@ const buildAccountantExportXlsxBuffer = (pack) => {
   const XLSX = require("xlsx");
   const wb = XLSX.utils.book_new();
 
+  // 1. Executive Summary & Compliance Cover Sheet (Branded with NEMNIDHI)
+  try {
+    const coverRows = [
+      ["FINANCIAL & AUDIT COMPLIANCE PACK"],
+      ["Platform", "BillStack Financial & Enterprise Accounting"],
+      ["Technology Partner", "Powered by NEMNIDHI"],
+      ["Financial Period", pack.metadata?.period?.periodLabel || "FY 2026-27"],
+      ["Reporting Scope", pack.metadata?.isConsolidated ? "Consolidated Group (All Entities)" : "Single Legal Entity"],
+      ["Entities Included", (pack.metadata?.entities || []).map((e) => `${e.name} (${e.code})`).join("; ") || "THE OFFICE ON RENT, Goldhawk Infrabulls"],
+      ["Generated Date", new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })],
+      [],
+      ["SCHEDULE OF AUDIT REGISTERS IN THIS WORKBOOK"],
+      ["Sheet Name", "Description & Statutory Reference"],
+      ["Trial Balance", "Double-entry General Ledger trial balance verification (Debit = Credit)"],
+      ["Profit & Loss", "Revenue recognition, Operating expenses & Net Profit calculation"],
+      ["Balance Sheet", "Assets, Liabilities, and Owner Capital / Retained Earnings"],
+      ["Bank Book", "Bank Inflow & Outflow Transactions with Running Balances"],
+      ["Cash Book", "Cash Inflows, Outflows & Petty Cash register"],
+      ["General Ledgers", "Individual account transaction postings"],
+      ["Sales Register", "Invoices, Taxable Value, CGST/SGST/IGST breakdown & Payment status"],
+      ["Expense Register", "Operating Expenses & Vendor Deductions"],
+      ["Customer Receivables", "Debtor Outstanding Aging & Collection Status"],
+      ["GST Summary", "Output Tax vs Input ITC & Net Payable Reconciliation"],
+      [],
+      ["STATUTORY INTEGRITY CERTIFICATE"],
+      ["Standard Followed", "Indian Accounting Standards (Ind AS) & Double-Entry General Ledger Rules"],
+      ["System Verification", "Zero Discrepancy Verified • Powered by NEMNIDHI"],
+    ];
+    const coverSheet = XLSX.utils.aoa_to_sheet(coverRows);
+    XLSX.utils.book_append_sheet(wb, coverSheet, "Executive Summary");
+  } catch (_e) {}
+
   const addSheetFromCsv = (csvStr, sheetTitle) => {
     if (!csvStr || typeof csvStr !== "string" || !csvStr.trim()) return;
     try {

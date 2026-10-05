@@ -258,10 +258,10 @@ const SubscriptionPage = () => {
     return (
       <div className="space-y-6">
         <section className="theme-hero rounded-[2rem] p-6 sm:p-8">
-          <p className="theme-hero-kicker text-sm uppercase tracking-[0.3em]">Subscription</p>
-          <h2 className="theme-hero-title mt-3 text-3xl font-semibold">Self-hosted deployment</h2>
-          <p className="theme-hero-copy mt-3 max-w-3xl text-sm">
-            SaaS subscription and upgrade controls are hidden in self-hosted mode. Module access is managed from Settings → Modules & Add-ons.
+          <p className="theme-hero-kicker text-sm uppercase tracking-[0.3em]">Workspace Provisioning</p>
+          <h2 className="theme-hero-title mt-3 text-3xl font-semibold">Enterprise Deployment • Powered by NEMNIDHI</h2>
+          <p className="theme-hero-copy mt-3 max-w-3xl text-sm leading-relaxed">
+            This workspace is dedicatedly provisioned and managed by NEMNIDHI. All multi-entity accounting engines, real-estate workflows, and enterprise modules are fully licensed and active.
           </p>
         </section>
       </div>

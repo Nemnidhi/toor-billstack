@@ -139,11 +139,48 @@ const resolveIndianPeriod = (query = {}) => {
     };
   }
 
-  // 4. Monthly
-  if (periodRaw === "THIS_MONTH" || periodRaw === "MONTH") {
-    const month = query.month ? parseInt(query.month, 10) : now.getUTCMonth() + 1;
-    const year = query.year ? parseInt(query.year, 10) : (month >= 4 ? fyStartYear : fyEndYear);
+  // 3b. Indian FY Half-Yearly (H1: Apr-Sep, H2: Oct-Mar)
+  if (periodRaw === "H1") {
+    const fromStr = `${fyStartYear}-04-01`;
+    const toStr = `${fyStartYear}-09-30`;
+    return {
+      fromDate: new Date(`${fromStr}T00:00:00.000Z`),
+      toDate: new Date(`${toStr}T23:59:59.999Z`),
+      fromStr,
+      toStr,
+      period: "H1",
+      periodLabel: `H1 (Apr - Sep ${fyStartYear})`,
+      fyLabel,
+    };
+  }
 
+  if (periodRaw === "H2") {
+    const fromStr = `${fyStartYear}-10-01`;
+    const toStr = `${fyEndYear}-03-31`;
+    return {
+      fromDate: new Date(`${fromStr}T00:00:00.000Z`),
+      toDate: new Date(`${toStr}T23:59:59.999Z`),
+      fromStr,
+      toStr,
+      period: "H2",
+      periodLabel: `H2 (Oct ${fyStartYear} - Mar ${fyEndYear})`,
+      fyLabel,
+    };
+  }
+
+  // 4. Monthly (Supports THIS_MONTH, LAST_MONTH, or specific months MONTH_1 to MONTH_12)
+  if (periodRaw.startsWith("MONTH_") || periodRaw === "THIS_MONTH" || periodRaw === "LAST_MONTH" || periodRaw === "MONTH") {
+    let month;
+    if (periodRaw.startsWith("MONTH_")) {
+      month = parseInt(periodRaw.replace("MONTH_", ""), 10);
+    } else if (periodRaw === "LAST_MONTH") {
+      month = now.getUTCMonth();
+      if (month === 0) month = 12;
+    } else {
+      month = query.month ? parseInt(query.month, 10) : now.getUTCMonth() + 1;
+    }
+
+    const year = query.year ? parseInt(query.year, 10) : (month >= 4 ? fyStartYear : fyEndYear);
     const padMonth = String(month).padStart(2, "0");
     const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
     const fromStr = `${year}-${padMonth}-01`;
@@ -156,7 +193,7 @@ const resolveIndianPeriod = (query = {}) => {
       toDate: new Date(`${toStr}T23:59:59.999Z`),
       fromStr,
       toStr,
-      period: "MONTH",
+      period: `MONTH_${month}`,
       periodLabel: `${monthNames[month]} ${year}`,
       fyLabel,
     };

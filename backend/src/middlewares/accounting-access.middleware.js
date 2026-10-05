@@ -1,4 +1,4 @@
-﻿const mongoose = require("mongoose");
+const mongoose = require("mongoose");
 const Business = require("../models/Business");
 const AppError = require("../utils/appError");
 const { listEntities, resolveEntityUser } = require("../services/billing-entity.service");
@@ -26,12 +26,14 @@ const authorizeAccountingReport = async (req, _res, next) => {
     const isConsolidatedRequest = requestedEntity.toLowerCase() === "all" || requestedEntity.toLowerCase() === "consolidated";
 
     const userEntities = await listEntities(req.user);
+    const homeBusiness = await Business.findById(req.user.businessId);
+    if (!homeBusiness) {
+      throw new AppError("Business not found", 404);
+    }
+    const rootBusinessId = homeBusiness.billingParentId || homeBusiness._id;
 
     if (isConsolidatedRequest) {
       // Find the group's entities
-      const homeBusiness = await Business.findById(req.user.businessId);
-      const rootBusinessId = homeBusiness.billingParentId || homeBusiness._id;
-
       const groupEntities = await Business.find({
         $or: [{ _id: rootBusinessId }, { billingParentId: rootBusinessId }],
         isDisabled: { $ne: true },
@@ -67,13 +69,16 @@ const authorizeAccountingReport = async (req, _res, next) => {
 
     if (requestedEntity && requestedEntity.toUpperCase() === "GOLDHAWK") {
       const gh = await Business.findOne({
-        $or: [{ billingParentId: req.user.businessId, billingEntityCode: "GOLDHAWK" }, { _id: req.user.businessId, billingEntityCode: "GOLDHAWK" }],
+        $or: [
+          { billingParentId: rootBusinessId, billingEntityCode: "GOLDHAWK" },
+          { _id: rootBusinessId, billingEntityCode: "GOLDHAWK" },
+        ],
+        isDisabled: { $ne: true },
       });
       if (!gh) throw new AppError("Goldhawk entity not found in your company group", 404);
       targetBusinessId = gh._id;
     } else if (requestedEntity && requestedEntity.toUpperCase() === "TOOR") {
-      const home = await Business.findById(req.user.businessId);
-      targetBusinessId = home.billingParentId || home._id;
+      targetBusinessId = rootBusinessId;
     } else if (requestedEntity && mongoose.isValidObjectId(requestedEntity)) {
       targetBusinessId = new mongoose.Types.ObjectId(requestedEntity);
     }

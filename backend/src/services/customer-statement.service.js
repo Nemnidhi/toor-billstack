@@ -42,8 +42,15 @@ const getSourceType = (entry) => {
 };
 
 const buildCustomerStatement = async ({ businessId, customerId, query = {} }) => {
+  const Business = require("../models/Business");
+  const bus = await Business.findById(businessId);
+  const allowedBusinessIds = [businessId];
+  if (bus?.billingParentId) allowedBusinessIds.push(bus.billingParentId);
+  const childBusinesses = await Business.find({ billingParentId: businessId }).select("_id");
+  childBusinesses.forEach((cb) => allowedBusinessIds.push(cb._id));
+
   const [customer, business] = await Promise.all([
-    Customer.findOne({ _id: customerId, businessId }),
+    Customer.findOne({ _id: customerId, businessId: { $in: allowedBusinessIds } }),
     Business.findById(businessId),
   ]);
 

@@ -147,6 +147,14 @@ export const router = createBrowserRouter([
                 element: lazyElement(<ReportsPage />, "Loading reports"),
               },
               {
+                path: "accounting",
+                element: lazyElement(<AccountingReportsPage />, "Loading accounting"),
+              },
+              {
+                path: "accounting/*",
+                element: lazyElement(<AccountingReportsPage />, "Loading accounting"),
+              },
+              {
                 path: "communications",
                 element: lazyElement(<CommunicationsPage />, "Loading communications"),
               },

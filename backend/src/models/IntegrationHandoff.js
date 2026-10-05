@@ -18,7 +18,7 @@ const integrationHandoffSchema = new mongoose.Schema(
         // RESIDENTIAL => Goldhawk (GST off); COMMERCIAL | COWORKING => TOOR (GST on)
         billingType: { type: String, enum: ["RESIDENTIAL", "COMMERCIAL", "COWORKING"], immutable: true },
         // Resolved billing entity code - drives entity auto-switch on consume
-        billingEntityCode: { type: String, enum: ["", "GOLDHAWK"], default: "", immutable: true },
+        billingEntityCode: { type: String, enum: ["", "TOOR", "GOLDHAWK"], default: "", immutable: true },
         // Stable source reference used for duplicate invoice prevention
         sourceRef: {
           type: new mongoose.Schema({

@@ -1,3 +1,4 @@
+const Business = require("../models/Business");
 const Customer = require("../models/Customer");
 const CreditNote = require("../models/CreditNote");
 const CustomerLedger = require("../models/CustomerLedger");
@@ -127,9 +128,17 @@ const createCustomer = asyncHandler(async (req, res) => {
 });
 
 const updateCustomer = asyncHandler(async (req, res) => {
+  const currentBusiness = await Business.findById(req.tenant.businessId);
+  const allowedBusinessIds = [req.tenant.businessId];
+  if (currentBusiness?.billingParentId) {
+    allowedBusinessIds.push(currentBusiness.billingParentId);
+  }
+  const childBusinesses = await Business.find({ billingParentId: req.tenant.businessId }).select("_id");
+  childBusinesses.forEach((cb) => allowedBusinessIds.push(cb._id));
+
   const customer = await Customer.findOne({
     _id: req.params.customerId,
-    businessId: req.tenant.businessId,
+    businessId: { $in: allowedBusinessIds },
   });
 
   if (!customer) {
@@ -160,9 +169,17 @@ const updateCustomer = asyncHandler(async (req, res) => {
 });
 
 const deleteCustomer = asyncHandler(async (req, res) => {
+  const currentBusiness = await Business.findById(req.tenant.businessId);
+  const allowedBusinessIds = [req.tenant.businessId];
+  if (currentBusiness?.billingParentId) {
+    allowedBusinessIds.push(currentBusiness.billingParentId);
+  }
+  const childBusinesses = await Business.find({ billingParentId: req.tenant.businessId }).select("_id");
+  childBusinesses.forEach((cb) => allowedBusinessIds.push(cb._id));
+
   const customer = await Customer.findOne({
     _id: req.params.customerId,
-    businessId: req.tenant.businessId,
+    businessId: { $in: allowedBusinessIds },
   });
 
   if (!customer) {
@@ -190,9 +207,17 @@ const deleteCustomer = asyncHandler(async (req, res) => {
 });
 
 const getCustomerLedger = asyncHandler(async (req, res) => {
+  const currentBusiness = await Business.findById(req.tenant.businessId);
+  const allowedBusinessIds = [req.tenant.businessId];
+  if (currentBusiness?.billingParentId) {
+    allowedBusinessIds.push(currentBusiness.billingParentId);
+  }
+  const childBusinesses = await Business.find({ billingParentId: req.tenant.businessId }).select("_id");
+  childBusinesses.forEach((cb) => allowedBusinessIds.push(cb._id));
+
   const customer = await Customer.findOne({
     _id: req.params.customerId,
-    businessId: req.tenant.businessId,
+    businessId: { $in: allowedBusinessIds },
   });
 
   if (!customer) {

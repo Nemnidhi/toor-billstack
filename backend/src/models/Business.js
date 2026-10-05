@@ -129,7 +129,7 @@ const businessProfileSchema = new mongoose.Schema(
 const businessSchema = new mongoose.Schema(
   {
     billingParentId: { type: mongoose.Schema.Types.ObjectId, ref: "Business", default: null, immutable: true },
-    billingEntityCode: { type: String, enum: ["", "GOLDHAWK"], default: "", immutable: true },
+    billingEntityCode: { type: String, enum: ["", "TOOR", "GOLDHAWK"], default: "", immutable: true },
     name: {
       type: String,
       required: true,

@@ -70,12 +70,23 @@ const AccountingReportsPage = () => {
     setLoading(true);
     setError("");
     try {
+      let loadErr = null;
       const [pl, bs, warn, accs] = await Promise.all([
-        getProfitLossRequest(queryParams).catch((e) => null),
-        getBalanceSheetRequest(queryParams).catch((e) => null),
+        getProfitLossRequest(queryParams).catch((e) => {
+          loadErr = e;
+          return null;
+        }),
+        getBalanceSheetRequest(queryParams).catch((e) => {
+          if (!loadErr) loadErr = e;
+          return null;
+        }),
         getHistoricalWarningRequest(queryParams).catch((e) => null),
         getAccountsRequest().catch((e) => []),
       ]);
+
+      if (!pl && !bs && loadErr) {
+        setError(loadErr.response?.data?.message || "Failed to load financial reports.");
+      }
 
       setPlData(pl);
       setBsData(bs);
@@ -218,15 +229,40 @@ const AccountingReportsPage = () => {
             <select
               value={selectedPeriod}
               onChange={(e) => setSelectedPeriod(e.target.value)}
-              className="bg-transparent text-xs font-semibold text-slate-800 outline-none dark:text-slate-200"
+              className="bg-transparent text-xs font-semibold text-slate-800 outline-none dark:text-slate-200 cursor-pointer"
             >
-              <option value="FY">Indian FY 2026-27 (Full Year)</option>
-              <option value="Q1">Q1 (Apr - Jun)</option>
-              <option value="Q2">Q2 (Jul - Sep)</option>
-              <option value="Q3">Q3 (Oct - Dec)</option>
-              <option value="Q4">Q4 (Jan - Mar)</option>
-              <option value="THIS_MONTH">Current Month</option>
-              <option value="CUSTOM">Custom Date Range</option>
+              <optgroup label="Yearly">
+                <option value="FY">Indian FY 2026-27 (Full Year)</option>
+              </optgroup>
+              <optgroup label="Half-Yearly">
+                <option value="H1">H1 (Apr - Sep)</option>
+                <option value="H2">H2 (Oct - Mar)</option>
+              </optgroup>
+              <optgroup label="Quarterly">
+                <option value="Q1">Q1 (Apr - Jun)</option>
+                <option value="Q2">Q2 (Jul - Sep)</option>
+                <option value="Q3">Q3 (Oct - Dec)</option>
+                <option value="Q4">Q4 (Jan - Mar)</option>
+              </optgroup>
+              <optgroup label="Monthly">
+                <option value="THIS_MONTH">Current Month</option>
+                <option value="LAST_MONTH">Previous Month</option>
+                <option value="MONTH_4">April</option>
+                <option value="MONTH_5">May</option>
+                <option value="MONTH_6">June</option>
+                <option value="MONTH_7">July</option>
+                <option value="MONTH_8">August</option>
+                <option value="MONTH_9">September</option>
+                <option value="MONTH_10">October</option>
+                <option value="MONTH_11">November</option>
+                <option value="MONTH_12">December</option>
+                <option value="MONTH_1">January</option>
+                <option value="MONTH_2">February</option>
+                <option value="MONTH_3">March</option>
+              </optgroup>
+              <optgroup label="Custom">
+                <option value="CUSTOM">Custom Date Range</option>
+              </optgroup>
             </select>
           </div>
 
@@ -257,6 +293,17 @@ const AccountingReportsPage = () => {
             title="Refresh reports"
           >
             <RefreshCw className={"h-4 w-4 " + (loading ? "animate-spin" : "")} />
+          </button>
+
+          {/* Quick CA Audit Pack Download */}
+          <button
+            onClick={handleDownloadXlsx}
+            disabled={exportLoading}
+            className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50"
+            title="Download CA-Ready Multi-Sheet Excel File"
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            <span>{exportLoading ? "Generating..." : "Download CA File (.XLSX)"}</span>
           </button>
         </div>
       </div>
@@ -606,8 +653,26 @@ const AccountingReportsPage = () => {
           </div>
 
           {selectedEntity === "all" ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900">
-              Please select an individual company (TOOR or Goldhawk) above to view its strict legal Trial Balance.
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 space-y-4">
+              <p className="max-w-xl mx-auto">
+                Under Indian AS and ICAI statutory rules, Trial Balance accounts are maintained per registered corporate entity to ensure Debit = Credit integrity.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setSelectedEntity("TOOR")}
+                  className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 transition"
+                >
+                  View THE OFFICE ON RENT (TOOR) Trial Balance
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedEntity("GOLDHAWK")}
+                  className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 transition"
+                >
+                  View Goldhawk Infrabulls Trial Balance
+                </button>
+              </div>
             </div>
           ) : tbData ? (
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -806,11 +871,18 @@ const AccountingReportsPage = () => {
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <button
+                onClick={handleDownloadXlsx}
+                disabled={exportLoading}
+                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50"
+              >
+                <FileSpreadsheet className="h-4 w-4" /> Download Complete CA Packet (Multi-Sheet Excel .xlsx)
+              </button>
+              <button
                 onClick={() => handleDownloadCsv("all")}
                 disabled={exportLoading}
                 className="flex items-center gap-2 rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-brand-700 disabled:opacity-50"
               >
-                <Download className="h-4 w-4" /> Download Complete Multi-Report Pack (Combined CSV)
+                <Download className="h-4 w-4" /> Download Multi-Report Pack (Combined CSV)
               </button>
             </div>
           </div>
@@ -851,6 +923,16 @@ const AccountingReportsPage = () => {
           </div>
         </div>
       )}
+
+      {/* Statutory Compliance Footer with Branding */}
+      <div className="mt-8 flex flex-col items-center justify-between gap-3 border-t border-slate-200/80 pt-6 text-center text-xs text-slate-400 sm:flex-row sm:text-left dark:border-slate-800">
+        <p>
+          Strict double-entry general ledger books complying with Indian Accounting Standards (Ind AS).
+        </p>
+        <p className="font-medium text-slate-500 dark:text-slate-400">
+          Enterprise Architecture &amp; Financial Engine <span className="font-semibold text-blue-600 dark:text-blue-400">Powered by NEMNIDHI</span>
+        </p>
+      </div>
     </div>
   );
 };

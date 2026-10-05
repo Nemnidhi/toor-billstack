@@ -209,9 +209,9 @@ const TeamPage = () => {
 
       <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <form onSubmit={handleSubmit} className="rounded-3xl border border-white/10 bg-white/5 p-6">
-          <h3 className="text-xl font-semibold text-white">{editingId ? "Edit team member" : "Add team member"}</h3>
+          <h3 className="text-xl font-semibold text-white">{editingId ? "Edit user access" : "Add user / Grant access"}</h3>
           <p className="mt-2 text-sm text-slate-400">
-            Owner has full access, admin can manage operations, staff is limited, and accountant focuses on invoices and reports.
+            Assign role and billing privileges. Authorized users receive billing access to TOOR and Goldhawk.
           </p>
 
           <div className="mt-5 grid gap-3 md:grid-cols-2">

@@ -52,7 +52,6 @@ const navItems = [
   { label: "Documents & Approvals", to: "/dashboard/approvals", icon: FileText, matches: ["/dashboard/approvals"], group: "operations" },
   { label: "Expenses", to: "/dashboard/expenses", icon: ReceiptIndianRupee, matches: ["/dashboard/expenses"], group: "finance" },
   { label: "Reports / GST", to: "/dashboard/reports", icon: BarChart3, matches: ["/dashboard/reports"], group: "finance" },
-  { label: "Accounting", to: "/dashboard/accounting", icon: Landmark, matches: ["/dashboard/accounting"], roles: ["owner", "admin", "accountant"], group: "finance" },
   { label: "Communications", to: "/dashboard/communications", icon: BellRing, matches: ["/dashboard/communications"], group: "communications" },
   { label: "Team", to: "/dashboard/team", icon: Users, matches: ["/dashboard/team"], roles: ["owner", "admin"], group: "people" },
   { label: "HR", to: "/dashboard/hr/employees", icon: Users, matches: ["/dashboard/hr/employees"], requiresHR: true, group: "people" },
@@ -143,7 +142,7 @@ const Sidebar = () => {
 
   const visibleItems = navItems.filter((item) => {
     if (!canShowItem(item, user)) return false;
-    if (item.saasOnly) return false; // Self-hosted TOOR deployment; hide SaaS subscription
+    if (item.saasOnly && isSelfHostedWorkspace(moduleData, business)) return false;
     const moduleKey = item.moduleKey || ROUTE_MODULES[item.to];
     if (moduleStatus !== "success" && moduleKey) return false;
     return isActiveModule(moduleData, moduleKey) && shouldShowWorkspaceNavigation(moduleKey, moduleData, business);
@@ -223,11 +222,18 @@ const Sidebar = () => {
             </div>
           ))}
         </nav>
-        <div className="sidebar-expanded-only mx-4 mt-3 rounded-xl border p-4" style={{ borderColor: "var(--panel-border)" }}>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.16em]" style={{ color: "var(--accent)" }}>{isLicensedWorkspace ? "Self-hosted" : "Current plan"}</p>
-          <p className="mt-1 text-sm font-semibold">{isLicensedWorkspace ? "Licensed workspace" : business?.plan?.name || "Free"}</p>
-          <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>{isLicensedWorkspace ? "Module access is managed by your license and workspace settings." : "Manage your plan in Subscription."}</p>
-          {isLicensedWorkspace ? <p className="mt-3 text-[11px] font-semibold tracking-[0.12em]" style={{ color: "var(--text-muted)" }}>NEMNIDHI</p> : null}
+        <div className="sidebar-expanded-only mx-4 mt-3 rounded-xl border p-3.5" style={{ borderColor: "var(--panel-border)" }}>
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em]" style={{ color: "var(--accent)" }}>
+              {business?.billingEntityCode === "GOLDHAWK" ? "Goldhawk Billing" : "TOOR Billing"}
+            </p>
+          </div>
+          <p className="mt-1 text-sm font-semibold truncate">{business?.name || "The Office On Rent"}</p>
+          <div className="mt-2 flex items-center justify-between border-t pt-1.5" style={{ borderColor: "var(--panel-border)" }}>
+            <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>Active System</span>
+            <span className="text-[10px] font-semibold tracking-wide" style={{ color: "var(--accent)" }}>Powered by NEMNIDHI</span>
+          </div>
         </div>
       </aside>
       {tooltip ? createPortal(<div id="sidebar-tooltip" role="tooltip" className="sidebar-tooltip" style={{ left: tooltip.left, top: tooltip.top }}>{tooltip.label}</div>, document.body) : null}

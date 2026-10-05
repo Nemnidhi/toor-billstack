@@ -103,8 +103,21 @@ const createPayment = async ({ businessId, userId, payload }) => {
   try {
     let payment;
     await session.withTransaction(async () => {
-      if (payload.customerId && !(await Customer.findOne({ _id: payload.customerId, businessId }).session(session))) throw new AppError("Customer not found", 404);
-      if (payload.supplierId && !(await Supplier.findOne({ _id: payload.supplierId, businessId }).session(session))) throw new AppError("Supplier not found", 404);
+      const Business = require("../models/Business");
+      const currentBusiness = await Business.findById(businessId).session(session);
+      const allowedBusinessIds = [businessId];
+      if (currentBusiness?.billingParentId) {
+        allowedBusinessIds.push(currentBusiness.billingParentId);
+      }
+      const childBusinesses = await Business.find({ billingParentId: businessId }).session(session).select("_id");
+      childBusinesses.forEach((cb) => allowedBusinessIds.push(cb._id));
+
+      if (payload.customerId && !(await Customer.findOne({ _id: payload.customerId, businessId: { $in: allowedBusinessIds } }).session(session))) {
+        throw new AppError("Customer not found", 404);
+      }
+      if (payload.supplierId && !(await Supplier.findOne({ _id: payload.supplierId, businessId: { $in: allowedBusinessIds } }).session(session))) {
+        throw new AppError("Supplier not found", 404);
+      }
       [payment] = await Payment.create([{ businessId, direction, amount, currency: payload.currency || "INR", paymentDate: payload.paymentDate ? new Date(payload.paymentDate) : new Date(), paymentMethod: payload.paymentMethod || "OTHER", referenceNumber: payload.referenceNumber || "", idempotencyKey, customerId: payload.customerId || null, supplierId: payload.supplierId || null, notes: payload.notes || "", createdBy: userId }], { session });
       await PaymentBalance.create(
         [{

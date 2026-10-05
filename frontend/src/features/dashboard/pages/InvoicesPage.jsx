@@ -241,6 +241,20 @@ const InvoicesPage = () => {
           next.saveForFuture = false;
         }
       }
+      if (field === 'productName' && !item.productId) {
+        const lower = String(value || '').toLowerCase();
+        if (!item.hsnSac || ['997212', '997222', '997211', '998599'].includes(item.hsnSac)) {
+          if (lower.includes('coworking') || lower.includes('desk') || lower.includes('cabin') || lower.includes('meeting room') || lower.includes('office rent')) {
+            next.hsnSac = '997212';
+          } else if (lower.includes('brokerage') || lower.includes('commission') || lower.includes('sale') || lower.includes('purchase') || lower.includes('resale')) {
+            next.hsnSac = '997222';
+          } else if (lower.includes('residential rent')) {
+            next.hsnSac = '997211';
+          } else if (lower.includes('virtual office')) {
+            next.hsnSac = '998599';
+          }
+        }
+      }
       return next;
     }),
   }));
@@ -320,6 +334,11 @@ const InvoicesPage = () => {
     } catch (error) {
       setErrors(error.response?.data?.errors || {});
       setMessage(pendingIssue.current ? `Invoice ${pendingIssue.current.invoiceNumber} is issued. Payment could not be completed. Retry to complete payment without creating another invoice. ${error.response?.data?.message || error.message || ""}` : error.response?.data?.message || "Unable to save invoice.");
+      if (pendingIssue.current) {
+        setPostIssue({ invoice: pendingIssue.current, sendError: "" });
+        resetEditor();
+        await Promise.all([loadInvoices(), loadMasterData()]).catch(() => {});
+      }
     } finally { saveLock.current = false; setIsSaving(false); }
   };
 

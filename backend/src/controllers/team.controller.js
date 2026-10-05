@@ -70,24 +70,43 @@ const createTeamMember = asyncHandler(async (req, res) => {
     }
   }
 
-  const existingUser = await User.findOne({
-    businessId,
-    email: req.body.email.trim().toLowerCase(),
-  });
+  const email = req.body.email.trim().toLowerCase();
+  let user = await User.findOne({ email });
+  const Membership = require("../models/BusinessMembership");
+  const Business = require("../models/Business");
 
-  if (existingUser) {
-    throw new AppError("A user with this email already exists for the business", 409);
+  if (user) {
+    await Membership.findOneAndUpdate(
+      { userId: user._id, businessId },
+      { $set: { role: req.body.role || "staff" } },
+      { upsert: true, new: true }
+    );
+    if (req.body.password) {
+      user.password = await hashPassword(req.body.password);
+    }
+    if (req.body.name) user.name = req.body.name.trim();
+    if (req.body.isActive !== undefined) user.isActive = `${req.body.isActive}` === "true";
+    await user.save();
+  } else {
+    const password = await hashPassword(req.body.password);
+    user = await User.create({
+      businessId,
+      name: req.body.name.trim(),
+      email,
+      password,
+      role: req.body.role,
+      isActive: req.body.isActive === undefined ? true : `${req.body.isActive}` === "true",
+    });
   }
 
-  const password = await hashPassword(req.body.password);
-  const user = await User.create({
-    businessId,
-    name: req.body.name.trim(),
-    email: req.body.email.trim().toLowerCase(),
-    password,
-    role: req.body.role,
-    isActive: req.body.isActive === undefined ? true : `${req.body.isActive}` === "true",
-  });
+  const childEntities = await Business.find({ billingParentId: businessId });
+  for (const child of childEntities) {
+    await Membership.findOneAndUpdate(
+      { userId: user._id, businessId: child._id },
+      { $set: { role: req.body.role || "staff" } },
+      { upsert: true, new: true }
+    );
+  }
 
   res.status(201).json({
     message: "Team member created successfully",
