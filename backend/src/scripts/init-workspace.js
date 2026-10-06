@@ -14,13 +14,13 @@ async function initWorkspace() {
   await mongoose.connect(mongoUri);
 
   const ownerEmail = (process.env.OWNER_EMAIL || "admin@theofficeonrent.com").trim().toLowerCase();
-  const ownerPassword = process.env.OWNER_PASSWORD || "Admin@12345";
-  const ownerName = process.env.OWNER_NAME || "Ashish Jatav";
+  const ownerPassword = process.env.OWNER_PASSWORD || "Admin@1234";
+  const ownerName = process.env.OWNER_NAME || "Akhil Singh Thakur";
 
   console.log("\n--- INITIALIZING BILLSTACK ENTERPRISE WORKSPACE ---");
 
   // 1. Primary Entity: THE OFFICE ON RENT (TOOR)
-  let toor = await Business.findOne({ billingEntityCode: "TOOR" });
+  let toor = await Business.findOne({ $or: [{ billingEntityCode: "TOOR" }, { slug: "the-office-on-rent" }, { slug: "toor" }] });
   if (!toor) {
     toor = await Business.create({
       name: "THE OFFICE ON RENT",
@@ -53,7 +53,7 @@ async function initWorkspace() {
   }
 
   // 2. Child Entity: Goldhawk Infrabulls Pvt. Ltd. (GOLDHAWK)
-  let goldhawk = await Business.findOne({ billingEntityCode: "GOLDHAWK" });
+  let goldhawk = await Business.findOne({ $or: [{ billingEntityCode: "GOLDHAWK" }, { slug: "goldhawk-infrabulls" }] });
   if (!goldhawk) {
     goldhawk = await Business.create({
       name: "Goldhawk Infrabulls Pvt. Ltd.",
