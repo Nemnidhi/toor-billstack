@@ -76,9 +76,14 @@ export default function BillingEntitySettings() {
 
       {goldhawk && (
         <div className="rounded-xl border p-4 bg-slate-50/50 dark:bg-slate-800/20 border-slate-200 dark:border-slate-800 space-y-3">
-          <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-            Assign Staff Access to Goldhawk Infrabulls
-          </p>
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Assign Staff Access to Secondary Entity (Goldhawk Infrabulls)
+            </p>
+            <p className="text-[11px] text-slate-500">
+              Note: Every team member automatically has access to THE OFFICE ON RENT. Use this to additionally allow them to switch to Goldhawk Infrabulls.
+            </p>
+          </div>
           <div className="flex flex-wrap items-center gap-3">
             <select
               aria-label="Employee for entity access"
