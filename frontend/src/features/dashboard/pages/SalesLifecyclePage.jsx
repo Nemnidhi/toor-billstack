@@ -341,13 +341,73 @@ const QuoteList = ({ rows, saving, onView, onEdit, onTransition, onConvert, onSe
 const QuoteEditor = ({ form, setForm, editing, setEditing, products, customers, clientWorkspace, saving, onSubmit }) => {
   const updateLine = (index, patch) => setForm((value) => ({ ...value, lineItems: value.lineItems.map((line, i) => i === index ? { ...line, ...patch } : line) }));
   const addLine = () => setForm((value) => ({ ...value, lineItems: [...value.lineItems, blankQuoteLine()] }));
+  const addCustomLine = () => setForm((value) => ({ ...value, lineItems: [...value.lineItems, { ...blankQuoteLine(), productId: "" }] }));
   const removeLine = (index) => setForm((value) => ({ ...value, lineItems: value.lineItems.filter((_, i) => i !== index) || [blankQuoteLine()] }));
   const reset = () => { setEditing(null); setForm(blankQuoteForm()); };
   return <form id="quote-editor" onSubmit={onSubmit} className="rounded-2xl border p-5 sm:p-6" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}>
     <div className="flex items-start justify-between gap-4"><div><p className="text-sm font-medium text-brand-600">Quotation details</p><h3 className="mt-1 text-xl font-semibold">{editing ? "Edit draft quotation" : "Create quotation"}</h3><p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>Choose a {clientWorkspace ? "client" : "customer"}, add services and confirm the estimated total.</p></div>{editing ? <button type="button" onClick={reset} className="rounded-lg p-2 hover:bg-slate-500/10" aria-label="Close quote editor"><X size={18} /></button> : null}</div>
     <div className="mt-6 grid gap-4 lg:grid-cols-2"><Field label={clientWorkspace ? "Client" : "Customer"}><select required value={form.customerId} onChange={(event) => setForm((value) => ({ ...value, customerId: event.target.value }))} className="field"><option value="">Select {clientWorkspace ? "client" : "customer"}</option>{customers.map((customer) => <option key={customer._id} value={customer._id}>{customer.name}</option>)}</select></Field><GstLocationPreview form={form} setForm={setForm} customers={customers} /></div>
-    <div className="mt-5 space-y-3">{form.lineItems.map((line, index) => <div key={index} className="rounded-xl border bg-slate-500/[.02] p-4" style={{ borderColor: "var(--panel-border)" }}><div className="mb-3 flex items-center justify-between"><p className="text-sm font-semibold">Item {index + 1}</p>{form.lineItems.length > 1 ? <button type="button" onClick={() => removeLine(index)} className="text-xs font-medium text-rose-600">Remove</button> : null}</div><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(220px,2fr)_90px_130px_100px_110px_140px]"><Field label="Item / service"><select required value={line.productId} onChange={(event) => { const product = products.find((item) => item._id === event.target.value); updateLine(index, { productId: event.target.value, rate: product?.sellingPrice ?? line.rate, taxRate: product?.taxRate ?? line.taxRate }); }} className="field"><option value="">Select item/service</option>{products.map((product) => <option key={product._id} value={product._id}>{product.name}</option>)}</select></Field><Field label="Qty"><input required type="number" min="0.01" step="0.01" value={line.quantity} onChange={(event) => updateLine(index, { quantity: event.target.value })} className="field" /></Field><Field label="Rate"><input type="number" min="0" step="0.01" value={line.rate} onChange={(event) => updateLine(index, { rate: event.target.value })} className="field" /></Field><Field label="GST %"><input type="number" min="0" step="0.01" value={line.taxRate} onChange={(event) => updateLine(index, { taxRate: event.target.value })} className="field" /></Field><Field label="Discount"><input type="number" min="0" step="0.01" value={line.discountValue} onChange={(event) => updateLine(index, { discountValue: event.target.value })} className="field" /></Field><Field label="Discount type"><select value={line.discountType} onChange={(event) => updateLine(index, { discountType: event.target.value })} className="field"><option value="percent">Percent</option><option value="amount">Amount</option></select></Field></div></div>)}</div>
-    <div className="mt-5 flex flex-col gap-4 border-t pt-5 sm:flex-row sm:items-center sm:justify-between" style={{ borderColor: "var(--panel-border)" }}><div className="flex flex-wrap items-center gap-3"><button type="button" onClick={addLine} className="rounded-xl border px-4 py-2.5 text-sm font-medium" style={{ borderColor: "var(--panel-border)" }}>+ Add item</button><div><p className="text-xs uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Estimated total</p><p className="mt-0.5 text-lg font-semibold">{money(estimatedQuoteTotal(form))}</p></div></div><div className="flex flex-col-reverse gap-2 sm:flex-row"><button type="button" disabled={saving} onClick={reset} className="rounded-xl border px-4 py-2.5 text-sm font-medium" style={{ borderColor: "var(--panel-border)" }}>{editing ? "Cancel editing" : "Reset"}</button><button disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"><Send size={16} /> {saving ? "Saving..." : editing ? "Update quotation" : "Create quotation"}</button></div></div>
+    <div className="mt-5 space-y-3">{form.lineItems.map((line, index) => <div key={index} className="rounded-xl border bg-slate-500/[.02] p-4" style={{ borderColor: "var(--panel-border)" }}>
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-semibold">Item {index + 1}</p>
+          {line.productId ? (
+            <span className="rounded-md bg-brand-500/10 px-2 py-0.5 text-xs font-medium text-brand-700 dark:text-brand-300">Saved Catalog Service</span>
+          ) : (
+            <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">Custom / Manual Item</span>
+          )}
+        </div>
+        {form.lineItems.length > 1 ? <button type="button" onClick={() => removeLine(index)} className="text-xs font-medium text-rose-600">Remove</button> : null}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Saved service / product">
+          <select value={line.productId || ""} onChange={(event) => {
+            const selectedId = event.target.value;
+            const product = products.find((item) => item._id === selectedId);
+            if (product) {
+              updateLine(index, {
+                productId: product._id,
+                productName: product.name,
+                rate: product.sellingPrice ?? line.rate,
+                taxRate: product.taxRate ?? line.taxRate,
+                hsnSac: product.hsnSac || line.hsnSac,
+              });
+            } else {
+              updateLine(index, { productId: "" });
+            }
+          }} className="field">
+            <option value="">Custom / Manual (type below)</option>
+            {products.map((product) => (
+              <option key={product._id} value={product._id}>
+                {product.name} {product.itemType === "service" || !product.trackInventory ? "· Service" : `· Stock ${product.currentStock}`}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Item / service description">
+          <input required value={line.productName || ""} onChange={(event) => updateLine(index, { productName: event.target.value })} placeholder="Type item or service name" className="field" />
+        </Field>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-[100px_130px_120px_100px_110px_140px]">
+        <Field label="Qty"><input required type="number" min="0.01" step="0.01" value={line.quantity} onChange={(event) => updateLine(index, { quantity: event.target.value })} className="field" /></Field>
+        <Field label="Rate"><input type="number" min="0" step="0.01" value={line.rate} onChange={(event) => updateLine(index, { rate: event.target.value })} className="field" /></Field>
+        <Field label="HSN / SAC"><input value={line.hsnSac || ""} onChange={(event) => updateLine(index, { hsnSac: event.target.value })} placeholder="e.g. 997212" className="field" /></Field>
+        <Field label="GST %"><input type="number" min="0" step="0.01" value={line.taxRate} onChange={(event) => updateLine(index, { taxRate: event.target.value })} className="field" /></Field>
+        <Field label="Discount"><input type="number" min="0" step="0.01" value={line.discountValue} onChange={(event) => updateLine(index, { discountValue: event.target.value })} className="field" /></Field>
+        <Field label="Discount type"><select value={line.discountType} onChange={(event) => updateLine(index, { discountType: event.target.value })} className="field"><option value="percent">Percent</option><option value="amount">Amount</option></select></Field>
+      </div>
+    </div>)}</div>
+    <div className="mt-5 flex flex-col gap-4 border-t pt-5 sm:flex-row sm:items-center sm:justify-between" style={{ borderColor: "var(--panel-border)" }}>
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" onClick={addLine} className="rounded-xl border px-4 py-2.5 text-sm font-medium" style={{ borderColor: "var(--panel-border)" }}>+ Add catalog item</button>
+        <button type="button" onClick={addCustomLine} className="rounded-xl border px-4 py-2.5 text-sm font-medium" style={{ borderColor: "var(--panel-border)" }}>+ Add custom item / service</button>
+        <div><p className="text-xs uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Estimated total</p><p className="mt-0.5 text-lg font-semibold">{money(estimatedQuoteTotal(form))}</p></div>
+      </div>
+      <div className="flex flex-col-reverse gap-2 sm:flex-row">
+        <button type="button" disabled={saving} onClick={reset} className="rounded-xl border px-4 py-2.5 text-sm font-medium" style={{ borderColor: "var(--panel-border)" }}>{editing ? "Cancel editing" : "Reset"}</button>
+        <button disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"><Send size={16} /> {saving ? "Saving..." : editing ? "Update quotation" : "Create quotation"}</button>
+      </div>
+    </div>
   </form>;
 };
 
