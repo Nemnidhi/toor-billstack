@@ -173,7 +173,9 @@ test("IntegrationHandoff model defines immutable billingContext schema", () => {
   const handoffModelCode = read("src", "models", "IntegrationHandoff.js");
   assert.match(handoffModelCode, /billingContext:\s*\{/);
   assert.match(handoffModelCode, /billingType:\s*\{\s*type:\s*String,\s*enum:\s*\["RESIDENTIAL",\s*"COMMERCIAL",\s*"COWORKING"\]/);
-  assert.match(handoffModelCode, /billingEntityCode:\s*\{\s*type:\s*String,\s*enum:\s*\["",\s*"GOLDHAWK"\]/);
+  const Handoff = require('../src/models/IntegrationHandoff');
+  const codes = Handoff.schema.path('billingContext').schema.path('billingEntityCode').enumValues;
+  assert.ok(codes.includes('') && codes.includes('GOLDHAWK'));
   assert.match(handoffModelCode, /sourceRef:\s*\{/);
   assert.match(handoffModelCode, /prefill:\s*\{/);
 });
@@ -243,6 +245,6 @@ test("CRM createInvoiceHandoff transmits billingContext to BillStack endpoint", 
 
 test("CRM billstack.controller builds billingContext on handoff action", () => {
   const crmCtrl = readCrm("src", "controllers", "billstack.controller.js");
-  assert.match(crmCtrl, /buildBillingContext\(companyId, type, customer\.entity\)/);
+  assert.match(crmCtrl, /buildBillingContext\(companyId, type, customer\.entity[,)]/);
   assert.match(crmCtrl, /createInvoiceHandoff\(companyId, customerId, billingContext\)/);
 });

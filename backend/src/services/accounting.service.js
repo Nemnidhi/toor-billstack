@@ -159,6 +159,9 @@ const postJournalEntry = async ({
  * Goldhawk: Posts AR, Revenue. GST is strictly ZERO.
  */
 const postInvoiceJournalEntry = async ({ invoice, business, userId, session }) => {
+  // Issuing a zero-value invoice does not create a debit, revenue or tax posting.
+  // Do not relax postJournalEntry's non-zero and balanced-entry requirements.
+  if (invoice.grandTotal === 0 && (invoice.totalTax ?? 0) === 0) return null;
   const accounts = await ensureDefaultAccounts({ businessId: invoice.businessId, session });
 
   const isGoldhawk =

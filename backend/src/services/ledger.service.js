@@ -19,8 +19,12 @@ const createLedgerEntryOnce = async (Model, entry, options = {}) => {
   }
 };
 
-const createCustomerLedgerEntryOnce = (entry, options) =>
-  createLedgerEntryOnce(CustomerLedger, entry, options);
+const createCustomerLedgerEntryOnce = (entry, options) => {
+  // A zero-value invoice (or its cancellation) creates no receivable movement.
+  // Keep positive-amount validation for payments and every actual ledger entry.
+  if (entry.invoiceId && ['INVOICE', 'REVERSAL'].includes(entry.eventType) && entry.amount === 0) return Promise.resolve(null);
+  return createLedgerEntryOnce(CustomerLedger, entry, options);
+};
 
 const createSupplierLedgerEntryOnce = (entry, options) =>
   createLedgerEntryOnce(SupplierLedger, entry, options);

@@ -150,12 +150,16 @@ const normalizeBillingContext = (ctx) => {
   } : null;
 
   const rawItems = Array.isArray(ctx.prefill?.lineItems) ? ctx.prefill.lineItems : [];
-  const lineItems = rawItems.slice(0, 20).map(item => ({
-    productName: String(item.productName || "").slice(0, 120),
-    quantity: Math.max(1, Number(item.quantity) || 1),
-    rate: Math.max(0, Number(item.rate) || 0),
-    rateReliable: Boolean(item.rateReliable),
-  }));
+  const lineItems = rawItems.slice(0, 20).map(item => {
+    const supplied = (typeof item.rate === "number" || (typeof item.rate === "string" && item.rate.trim() !== ""))
+      && Number.isFinite(Number(item.rate)) && Number(item.rate) >= 0;
+    return {
+      productName: String(item.productName || "").slice(0, 120),
+      quantity: Math.max(1, Number(item.quantity) || 1),
+      rate: supplied ? Number(item.rate) : null,
+      rateReliable: supplied && item.rateReliable === true,
+    };
+  });
 
   return {
     billingType,
