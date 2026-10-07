@@ -32,7 +32,7 @@ const date = (value) => value ? new Date(value).toLocaleDateString("en-IN", { da
 const sourceKey = (prefix, payload) => `${prefix}:${encodeURIComponent(JSON.stringify(payload))}`;
 const statusClass = (status) => ["ACCEPTED", "CONVERTED", "ISSUED"].includes(status) ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : ["REJECTED", "EXPIRED", "CANCELLED"].includes(status) ? "bg-rose-500/10 text-rose-700 dark:text-rose-300" : status === "SENT" ? "bg-brand-500/10 text-brand-700 dark:text-brand-200" : "bg-slate-500/10 text-slate-700 dark:text-slate-200";
 
-const blankQuoteLine = () => ({ productId: "", quantity: 1, rate: "", taxRate: "", discountValue: 0, discountType: "percent" });
+const blankQuoteLine = () => ({ productId: "", productName: "", quantity: 1, rate: "", taxRate: "", hsnSac: "", discountValue: 0, discountType: "percent" });
 const blankQuoteForm = () => ({ customerId: "", lineItems: [blankQuoteLine()], shippingCharges: 0, roundOff: 0 });
 const blankCreditForm = () => ({ invoiceId: "", lineItems: [] });
 const blankReturnForm = () => ({ invoiceId: "", lineItems: [] });
@@ -217,7 +217,7 @@ const SalesLifecyclePage = () => {
       setEditingQuote(detail);
       setQuoteForm({
         customerId: detail.customerId?._id || detail.customerId,
-        lineItems: detail.lineItems?.map((line) => ({ productId: line.productId?._id || line.productId, quantity: line.quantity, rate: line.rate, taxRate: line.taxRate, discountValue: line.discountValue || 0, discountType: line.discountType || "percent" })) || [blankQuoteLine()],
+        lineItems: detail.lineItems?.map((line) => ({ productId: line.productId?._id || line.productId || "", productName: line.productName || "", hsnSac: line.hsnSac || "", quantity: line.quantity, rate: line.rate, taxRate: line.taxRate, discountValue: line.discountValue || 0, discountType: line.discountType || "percent" })) || [blankQuoteLine()],
         shippingCharges: detail.shippingCharges || 0,
         roundOff: detail.roundOff || 0,
       });
@@ -281,7 +281,22 @@ const SalesLifecyclePage = () => {
   </div>;
 };
 
-const normalizeQuotePayload = (form, productMap) => ({ ...form, lineItems: form.lineItems.map((line) => { const product = productMap.get(String(line.productId)); return { ...line, quantity: Number(line.quantity || 0), rate: Number(line.rate || product?.sellingPrice || 0), taxRate: Number(line.taxRate || product?.taxRate || 0), discountValue: Number(line.discountValue || 0) }; }) });
+const normalizeQuotePayload = (form, productMap) => ({
+  ...form,
+  lineItems: form.lineItems.map((line) => {
+    const product = line.productId ? productMap.get(String(line.productId)) : null;
+    return {
+      ...line,
+      productId: product ? product._id : null,
+      productName: line.productName || product?.name || "Service",
+      hsnSac: line.hsnSac !== undefined && line.hsnSac !== "" ? line.hsnSac : (product?.hsnSac || ""),
+      quantity: Number(line.quantity || 0),
+      rate: Number(line.rate !== "" && line.rate !== undefined ? line.rate : (product?.sellingPrice || 0)),
+      taxRate: Number(line.taxRate !== "" && line.taxRate !== undefined ? line.taxRate : (product?.taxRate || 0)),
+      discountValue: Number(line.discountValue || 0),
+    };
+  }),
+});
 const usageByInvoiceLine = (rows, invoiceId, field) => rows.filter((row) => String(row.invoiceId?._id || row.invoiceId) === String(invoiceId)).reduce((map, row) => { (row.lineItems || []).forEach((line) => map.set(Number(line.invoiceLineIndex), Number(map.get(Number(line.invoiceLineIndex)) || 0) + Number(line[field] || 0))); return map; }, new Map());
 const lineValue = (line, quantity) => Number(line.quantity || 0) > 0 ? Number(line.itemTotal || 0) * Number(quantity || 0) / Number(line.quantity || 1) : 0;
 

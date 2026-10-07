@@ -29,7 +29,14 @@ const cleanPhone = (val) => {
   return digits.length >= 10 ? digits.slice(-10) : digits;
 };
 
-const cleanEmail = (val) => cleanText(val).toLowerCase();
+const cleanEmail = (val) => {
+  if (!val || typeof val !== "string") return "";
+  const cleaned = val.replace(/^mailto:/i, "").trim();
+  const angleMatch = cleaned.match(/<([^>]+)>/);
+  const candidate = (angleMatch ? angleMatch[1] : cleaned).trim().toLowerCase();
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(candidate) ? candidate : "";
+};
 
 const normalizeName = (val) => cleanText(val).toLowerCase().replace(/[^a-z0-9]/g, "");
 

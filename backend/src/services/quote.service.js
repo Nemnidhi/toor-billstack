@@ -19,28 +19,44 @@ const { createCustomerLedgerEntryOnce } = require("./ledger.service");
 const normalizeLineItems = async ({ businessId, rawItems, session }) => {
   const items = Array.isArray(rawItems) ? rawItems : [];
   if (!items.length) throw new AppError("At least one quote line item is required", 400);
-  const productIds = items.map((item) => item.productId).filter(Boolean);
-  if (productIds.length !== items.length) throw new AppError("One or more quote products are invalid", 400);
 
-  const products = await Product.find({
-    _id: { $in: productIds },
-    businessId,
-  }).session(session);
+  const productIds = items.map((item) => item.productId).filter(Boolean);
+  const products = productIds.length
+    ? await Product.find({ _id: { $in: productIds }, businessId }).session(session)
+    : [];
   const productMap = new Map(products.map((product) => [product._id.toString(), product]));
 
   return items.map((item) => {
-    const product = productMap.get(String(item.productId));
-    if (!product) throw new AppError("One or more quote products are invalid", 400);
+    if (item.productId) {
+      const product = productMap.get(String(item.productId));
+      if (!product) throw new AppError("One or more quote products are invalid", 400);
+      return {
+        productId: product._id,
+        productName: item.productName || product.name,
+        hsnSac: item.hsnSac !== undefined && item.hsnSac !== "" ? item.hsnSac : (product.hsnSac || ""),
+        gstClassification: item.gstClassification || product.gstClassification || "TAXABLE",
+        isManual: false,
+        quantity: Number(item.quantity || 0),
+        rate: Number(item.rate ?? product.sellingPrice ?? 0),
+        taxRate: Number(item.taxRate ?? item.tax ?? product.taxRate ?? 0),
+        discountType: item.discountType === "amount" ? "amount" : "percent",
+        discountValue: Number(item.discountValue !== undefined ? item.discountValue : item.discount ?? product.discount ?? 0),
+      };
+    }
+
+    const manualName = String(item.productName || item.name || "").trim();
+    if (!manualName) throw new AppError("One or more quote products are invalid", 400);
     return {
-      productId: product._id,
-      productName: product.name,
-      hsnSac: product.hsnSac || "",
-      gstClassification: product.gstClassification || "TAXABLE",
+      productId: null,
+      productName: manualName,
+      hsnSac: String(item.hsnSac || "").trim(),
+      gstClassification: item.gstClassification || "TAXABLE",
+      isManual: true,
       quantity: Number(item.quantity || 0),
-      rate: Number(item.rate ?? product.sellingPrice ?? 0),
-      taxRate: Number(item.taxRate ?? item.tax ?? product.taxRate ?? 0),
+      rate: Number(item.rate || 0),
+      taxRate: Number(item.taxRate ?? item.tax ?? 0),
       discountType: item.discountType === "amount" ? "amount" : "percent",
-      discountValue: Number(item.discountValue !== undefined ? item.discountValue : item.discount ?? product.discount ?? 0),
+      discountValue: Number(item.discountValue !== undefined ? item.discountValue : item.discount ?? 0),
     };
   });
 };
@@ -241,7 +257,8 @@ const convertQuote = async ({ businessId, userId, id }) => {
       ]);
       if (!business || !customer) throw new AppError("Business or customer not found", 404);
 
-      const products = await Product.find({ _id: { $in: quote.lineItems.map((item) => item.productId) }, businessId }).session(session);
+      const productIds = quote.lineItems.map((item) => item.productId).filter(Boolean);
+      const products = productIds.length ? await Product.find({ _id: { $in: productIds }, businessId }).session(session) : [];
       const { totals, gstSnapshot } = buildTaxDocument({ business, counterparty: customer, products, lineItems: quote.lineItems, placeOfSupplyCode: quote.placeOfSupplyCode, shippingCharges: quote.shippingCharges, roundOff: quote.roundOff, amountPaid: 0 });
 
       const sequence = business.invoiceNumbering?.nextSequence || 1;
@@ -305,4 +322,4 @@ const generateQuotePdf = async ({ businessId, id }) => {
   return generateQuotePdfBuffer({ quote, business });
 };
 
-module.exports = { createQuote, listQuotes, getQuote, setQuoteStatus, convertQuote, updateQuote, generateQuotePdf };
+module.exports = { normalizeLineItems, createQuote, listQuotes, getQuote, setQuoteStatus, convertQuote, updateQuote, generateQuotePdf };

@@ -19,6 +19,7 @@ const { allocatePayment, createPayment } = require("./payment.service");
 const { createCustomerLedgerEntryOnce } = require("./ledger.service");
 const { ensureBusinessSubscription, getPlanEntitlements, isSubscriptionAccessible } = require("../utils/subscription");
 const { buildInventoryFlags } = require("./inventory.service");
+const { resolveOrCreateCatalogService } = require("./service-catalog.service");
 
 const stableStringify = (value) => {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
@@ -29,7 +30,14 @@ const stableStringify = (value) => {
 };
 const hashValue = (value) => crypto.createHash("sha256").update(String(value)).digest("hex");
 const cleanText = (value, maxLength) => String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, maxLength);
-const normalizeEmail = (value) => cleanText(value, 254).toLowerCase();
+const extractCleanEmail = (raw) => {
+  if (!raw || typeof raw !== "string") return "";
+  const cleaned = raw.replace(/^mailto:/i, "").trim();
+  const angleMatch = cleaned.match(/<([^>]+)>/);
+  const candidate = (angleMatch ? angleMatch[1] : cleaned).trim().toLowerCase();
+  return candidate;
+};
+const normalizeEmail = (value) => extractCleanEmail(value);
 const normalizePhone = (value) => cleanText(value, 32).replace(/\D/g, "");
 
 const normalizeCustomerSyncPayload = (payload = {}, credential) => {
@@ -154,10 +162,14 @@ const normalizeBillingContext = (ctx) => {
     const supplied = (typeof item.rate === "number" || (typeof item.rate === "string" && item.rate.trim() !== ""))
       && Number.isFinite(Number(item.rate)) && Number(item.rate) >= 0;
     return {
-      productName: String(item.productName || "").slice(0, 120),
+      productName: String(item.productName || item.serviceName || "").slice(0, 120),
+      serviceName: String(item.serviceName || item.productName || "").slice(0, 120),
       quantity: Math.max(1, Number(item.quantity) || 1),
       rate: supplied ? Number(item.rate) : null,
       rateReliable: supplied && item.rateReliable === true,
+      hsnSac: String(item.hsnSac || "").slice(0, 20),
+      description: String(item.description || "").slice(0, 500),
+      taxRate: Number.isFinite(Number(item.taxRate)) ? Number(item.taxRate) : undefined,
     };
   });
 

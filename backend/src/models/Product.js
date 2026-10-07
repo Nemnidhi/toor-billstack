@@ -13,6 +13,16 @@ const productSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    description: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    itemType: {
+      type: String,
+      enum: ["product", "service"],
+      default: "product",
+    },
     sku: {
       type: String,
       trim: true,
