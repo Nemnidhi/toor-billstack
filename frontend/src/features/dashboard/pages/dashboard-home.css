@@ -1,11 +1,11 @@
 .dashboard-home .dashboard-muted { color: var(--text-muted); }
-.dashboard-card { min-width: 0; padding: 18px; border: 1px solid var(--panel-border); border-radius: 16px; background: var(--theme-surface-strong); box-shadow: 0 1px 2px rgb(15 23 42 / 2%); }
+.dashboard-card { min-width: 0; padding: 18px; border: 1px solid var(--panel-border); border-radius: 14px; background: var(--theme-surface-strong); box-shadow: var(--panel-shadow); }
 .dashboard-kpis { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .dashboard-kpis > :last-child { grid-column: 1 / -1; }
 .dashboard-columns { display: grid; gap: 16px; align-items: start; grid-template-columns: minmax(0, 1fr); }
 .dashboard-action { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 44px; padding: 9px 12px; border: 1px solid transparent; border-radius: 10px; font-size: 13px; font-weight: 500; transition: background-color 180ms ease; }
 .dashboard-secondary { background: var(--theme-surface-strong); border-color: var(--panel-border); color: var(--text-primary); }
-.dashboard-secondary:hover { background: var(--theme-surface-input); }
+.dashboard-secondary:hover { background: var(--theme-surface-muted); }
 .dashboard-text-action { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; padding: 3px 0; font-size: 12px; font-weight: 600; color: var(--accent); border-radius: 4px; transition: opacity 180ms ease; }
 .dashboard-text-action:hover { opacity: .75; }
 .dashboard-home button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
@@ -19,7 +19,7 @@
 .dashboard-operation { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 0; text-align: left; border-radius: 6px; transition: background-color 180ms ease; }
 .dashboard-operation:first-child { padding-top: 0; }
 .dashboard-operation:last-child { padding-bottom: 0; }
-.dashboard-operation:hover { background: var(--theme-surface-input); }
+.dashboard-operation:hover { background: var(--theme-surface-muted); }
 @media (min-width: 640px) {
   .dashboard-invoice-head, .dashboard-invoice-row { grid-template-columns: minmax(110px, 1fr) minmax(75px, auto) minmax(78px, auto) 58px 46px; }
   .dashboard-invoice-head { display: grid; padding-bottom: 8px; }

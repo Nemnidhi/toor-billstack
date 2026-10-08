@@ -99,16 +99,27 @@ const formatDate = (value) => (value ? new Date(value).toLocaleDateString("en-IN
 const formatDateTime = (value) => (value ? new Date(value).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
 
 const Badge = ({ children }) => (
-  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone[children] || "bg-slate-100 text-slate-700"}`}>
-    {String(children || "—").replaceAll("_", " ")}
+  <span className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${statusTone[children] || "bg-slate-100 text-slate-700"}`}>
+    {String(children || "—").replaceAll("_", " ").toLowerCase()}
   </span>
 );
 
-const EmptyState = ({ title, description }) => (
-  <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-10 text-center">
+const MANUAL_ITEM = "__manual__";
+
+const EmptyState = ({ title, description, icon: Icon = FileText }) => (
+  <div className="empty-state">
+    <span className="empty-state-icon"><Icon size={22} /></span>
     <p className="text-base font-semibold text-slate-900">{title}</p>
-    <p className="mt-2 text-sm text-slate-500">{description}</p>
+    <p className="mt-1 max-w-sm text-sm text-slate-500">{description}</p>
   </div>
+);
+
+const Field = ({ label, hint, error, children, className = "" }) => (
+  <label className={`form-field ${className}`}>
+    {label ? <span className="form-label">{label}</span> : null}
+    {children}
+    {error ? <span className="form-error" role="alert">{error}</span> : hint ? <span className="form-hint">{hint}</span> : null}
+  </label>
 );
 
 const WorkflowPage = () => {
@@ -131,6 +142,7 @@ const WorkflowPage = () => {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [form, setForm] = useState({});
+  const [fieldErrors, setFieldErrors] = useState({});
   const [pendingDelete, setPendingDelete] = useState(null);
   const loadSequenceRef = useRef(0);
 
@@ -224,6 +236,27 @@ const WorkflowPage = () => {
   const firstProject = projects[0]?._id || projects[0]?.id || "";
   const firstUser = team[0]?._id || team[0]?.id || "";
   const selectedProduct = products.find((product) => String(product._id || product.id) === String(form.productId || ""));
+  // Workspaces without a product catalog (e.g. office rental) type the service directly.
+  const recurringManualItem = activeTab === "recurring" && (!products.length || form.productId === MANUAL_ITEM);
+  const recurringTotal = Number(form.quantity || 1) * Number(form.rate || 0);
+  const updateField = (field, value) => {
+    setForm((current) => ({ ...current, [field]: value }));
+    if (fieldErrors[field]) setFieldErrors((current) => ({ ...current, [field]: "" }));
+  };
+
+  const validateRecurring = () => {
+    const errors = {};
+    if (!(form.customerId || firstCustomer)) errors.customerId = "Add or select a client first.";
+    const productId = form.productId && form.productId !== MANUAL_ITEM ? form.productId : "";
+    if (!productId && !String(form.productName || "").trim()) {
+      errors.productId = recurringManualItem ? "Type what you are billing for, e.g. Cabin rent." : "Select a service or choose “Type a new service”.";
+    }
+    const quantity = Number(form.quantity || 1);
+    if (!Number.isFinite(quantity) || quantity <= 0) errors.quantity = "Must be more than 0.";
+    if (form.rate === undefined || form.rate === "" || !Number.isFinite(Number(form.rate)) || Number(form.rate) <= 0) errors.rate = "Enter the billing amount.";
+    setFieldErrors(errors);
+    return !Object.keys(errors).length;
+  };
 
   const submit = async (event) => {
     event.preventDefault();
@@ -247,14 +280,22 @@ const WorkflowPage = () => {
         await createTaskRequest({ title: form.title, projectId: form.projectId || firstProject || undefined, assignedTo: form.assignedTo || firstUser || undefined, dueDate: form.dueDate || undefined });
       }
       if (activeTab === "recurring") {
+        if (!validateRecurring()) return;
         const selectedCustomer = customers.find((customer) => String(customer._id || customer.id) === String(form.customerId || firstCustomer));
+        const productId = form.productId && form.productId !== MANUAL_ITEM ? form.productId : undefined;
         const createdProfile = await createRecurringProfileRequest({
           placeOfSupplyCode: form.placeOfSupplyCode,
           customerId: form.customerId || firstCustomer,
           name: form.name?.trim() || `${selectedCustomer?.name || "Client"} monthly billing`,
           frequency: form.frequency || "MONTHLY",
           startDate: form.startDate || new Date().toISOString().slice(0, 10),
-          lineItems: [{ productId: form.productId || firstProduct, quantity: Number(form.quantity || 1), rate: Number(form.rate || 0) }],
+          lineItems: [{
+            productId,
+            productName: productId ? undefined : String(form.productName || "").trim(),
+            quantity: Number(form.quantity || 1),
+            rate: Number(form.rate || 0),
+            taxRate: productId ? undefined : Number(form.taxRate ?? (business?.gstConfiguration?.enabled ? 18 : 0)),
+          }],
         });
         setData((current) => [{ ...createdProfile, customerId: selectedCustomer || createdProfile.customerId }, ...current.filter((item) => item._id !== createdProfile._id)]);
       }
@@ -306,7 +347,8 @@ const WorkflowPage = () => {
         });
       }
       setForm({});
-      setSuccess(`${currentTab.label} saved successfully.`);
+      setFieldErrors({});
+      setSuccess(activeTab === "recurring" ? "Billing profile created as a draft. Click Activate to start raising invoices." : `${currentTab.label} saved successfully.`);
       await loadData();
     } catch (err) {
       setError(err?.response?.data?.message || "Unable to save. Please check the fields and try again.");
@@ -344,19 +386,22 @@ const WorkflowPage = () => {
   const renderRows = () => {
     if (loading) {
       return (
-        <div className="flex items-center justify-center rounded-2xl border bg-white p-12 text-slate-500">
+        <div className="panel flex items-center justify-center p-12 text-slate-500">
           <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading {currentTab.label.toLowerCase()}...
         </div>
       );
     }
-    if (!filtered.length) return <EmptyState title={`No ${currentTab.label.toLowerCase()} yet`} description="Create your first record to get started." />;
+    if (!filtered.length) {
+      if (query) return <EmptyState icon={Search} title="No matches" description={`Nothing matches “${query}”. Try a different search.`} />;
+      return <EmptyState icon={currentTab.icon} title={`No ${currentTab.label.toLowerCase()} yet`} description={activeTab === "recurring" ? "Pick a client, type what you bill them for and the amount. BillStack raises the invoice every cycle." : "Create your first record using the form."} />;
+    }
 
     if (activeTab === "orders") {
       return filtered.map((item) => (
-        <div key={item._id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div key={item._id} className="panel panel-hover p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-lg font-bold text-slate-950">{item.orderNumber}</p>
+              <p className="text-base font-bold text-slate-950">{item.orderNumber}</p>
               <p className="text-sm text-slate-500">{item.customerId?.name || item.customerSnapshot?.name || "Customer"} · {formatDate(item.orderDate)}</p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -380,10 +425,10 @@ const WorkflowPage = () => {
 
     if (activeTab === "projects") {
       return filtered.map((item) => (
-        <div key={item._id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div key={item._id} className="panel panel-hover p-5">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-lg font-bold text-slate-950">{item.name}</p>
+              <p className="text-base font-bold text-slate-950">{item.name}</p>
               <p className="text-sm text-slate-500">{item.projectNumber} · {item.customerId?.name || "Internal"} · Due {formatDate(item.dueDate)}</p>
             </div>
             <Badge>{item.status}</Badge>
@@ -401,10 +446,10 @@ const WorkflowPage = () => {
 
     if (activeTab === "tasks") {
       return filtered.map((item) => (
-        <div key={item._id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div key={item._id} className="panel panel-hover p-5">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-lg font-bold text-slate-950">{item.title}</p>
+              <p className="text-base font-bold text-slate-950">{item.title}</p>
               <p className="text-sm text-slate-500">{item.projectId?.name || "Standalone"} · {item.assignedTo?.name || "Unassigned"} · Due {formatDate(item.dueDate)}</p>
             </div>
             <Badge>{item.status}</Badge>
@@ -422,16 +467,20 @@ const WorkflowPage = () => {
 
     if (activeTab === "recurring") {
       return filtered.map((item) => (
-        <div key={item._id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div key={item._id} className="panel panel-hover p-5">
           <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-lg font-bold text-slate-950">{item.name}</p>
-              <p className="text-sm text-slate-500">{item.customerId?.name || "Customer"} · {item.frequency} · Next {formatDate(item.nextBillingDate)}</p>
+            <div className="min-w-0">
+              <p className="truncate text-base font-bold text-slate-950">{item.name}</p>
+              <p className="mt-0.5 text-sm text-slate-500">{item.customerId?.name || "Client"}{item.lineItems?.[0]?.productName ? ` · ${item.lineItems[0].productName}` : ""}</p>
             </div>
             <Badge>{item.status}</Badge>
           </div>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-            <span className="font-semibold text-slate-900">{money(item.grandTotal)}</span>
+          <dl className="mt-4 grid grid-cols-3 gap-3 rounded-xl bg-slate-50 p-3 text-sm">
+            <div><dt className="text-xs text-slate-500">Amount</dt><dd className="font-bold text-slate-950">{money(item.grandTotal)}</dd></div>
+            <div><dt className="text-xs text-slate-500">Repeats</dt><dd className="font-semibold capitalize text-slate-900">{String(item.frequency || "").toLowerCase().replace("_", "-")}</dd></div>
+            <div><dt className="text-xs text-slate-500">Next bill</dt><dd className="font-semibold text-slate-900">{formatDate(item.nextBillingDate)}</dd></div>
+          </dl>
+          <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
             <div className="flex flex-wrap gap-2">
               {item.status === "DRAFT" ? <button className="btn-secondary" onClick={() => action(() => updateRecurringStatusRequest(item._id, "ACTIVE"), "Recurring profile activated.")}><PlayCircle size={15} /> Activate</button> : null}
               {item.status === "ACTIVE" ? <button className="btn-secondary" onClick={() => action(() => updateRecurringStatusRequest(item._id, "PAUSED"), "Recurring profile paused.")}><PauseCircle size={15} /> Pause</button> : null}
@@ -447,10 +496,10 @@ const WorkflowPage = () => {
 
     if (activeTab === "production") {
       return filtered.map((item) => (
-        <div key={item._id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div key={item._id} className="panel panel-hover p-5">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-lg font-bold text-slate-950">{item.title}</p>
+              <p className="text-base font-bold text-slate-950">{item.title}</p>
               <p className="text-sm text-slate-500">{item.jobNumber} · Output {item.outputProductId?.name || "Product"} · Due {formatDate(item.dueDate)}</p>
             </div>
             <Badge>{item.status}</Badge>
@@ -466,10 +515,10 @@ const WorkflowPage = () => {
 
     if (activeTab === "batches") {
       return filtered.map((item) => (
-        <div key={item._id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div key={item._id} className="panel panel-hover p-5">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-lg font-bold text-slate-950">{item.batchNumber}</p>
+              <p className="text-base font-bold text-slate-950">{item.batchNumber}</p>
               <p className="text-sm text-slate-500">{item.productId?.name || "Product"} · Qty {item.quantityOnHand || 0} · Expiry {formatDate(item.expiryDate)}</p>
             </div>
             <Badge>{item.status}</Badge>
@@ -486,10 +535,10 @@ const WorkflowPage = () => {
 
     if (activeTab === "dispatches") {
       return filtered.map((item) => (
-        <div key={item._id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div key={item._id} className="panel panel-hover p-5">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-lg font-bold text-slate-950">{item.dispatchNumber}</p>
+              <p className="text-base font-bold text-slate-950">{item.dispatchNumber}</p>
               <p className="text-sm text-slate-500">{item.customerId?.name || "Customer"} · {item.carrier || "Carrier pending"} · {item.trackingNumber || "No tracking"}</p>
             </div>
             <Badge>{item.status}</Badge>
@@ -506,10 +555,10 @@ const WorkflowPage = () => {
 
     if (activeTab === "approvals") {
       return filtered.map((item) => (
-        <div key={item._id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div key={item._id} className="panel panel-hover p-5">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-lg font-bold text-slate-950">{item.title}</p>
+              <p className="text-base font-bold text-slate-950">{item.title}</p>
               <p className="text-sm text-slate-500">{item.documentType || "GENERAL"} · {item.sourceType || "GENERAL"} · {item.approvers?.length || 0} approver(s)</p>
             </div>
             <Badge>{item.status}</Badge>
@@ -525,10 +574,10 @@ const WorkflowPage = () => {
     }
 
     return filtered.map((item) => (
-      <div key={item._id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div key={item._id} className="panel panel-hover p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-lg font-bold text-slate-950">{item.title}</p>
+            <p className="text-base font-bold text-slate-950">{item.title}</p>
             <p className="text-sm text-slate-500">{item.customerId?.name || "No customer"} · {formatDateTime(item.startAt)} – {formatDateTime(item.endAt)}</p>
           </div>
           <Badge>{item.status}</Badge>
@@ -549,16 +598,16 @@ const WorkflowPage = () => {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-sm font-semibold text-brand-600">Business workspace</p>
-          <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950">{currentTab.label}</h1>
-          <p className="mt-2 max-w-2xl text-sm text-slate-500">
+          <p className="page-kicker">{isRealEstateClient ? "Operations" : "Business workspace"}</p>
+          <h1 className="page-title">{currentTab.label}</h1>
+          <p className="page-subtitle">
             {isRealEstateClient ? "Manage monthly client billing for this workspace." : "Manage reusable workflow activity for this workspace."}
           </p>
         </div>
         <button type="button" onClick={loadData} className="btn-secondary"><RefreshCw size={16} /> Refresh</button>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm no-scrollbar">
+      {visibleTabs.length > 1 ? <div className="segmented no-scrollbar">
         {visibleTabs.map((tab) => {
           const Icon = tab.icon;
           const active = tab.key === activeTab;
@@ -567,112 +616,203 @@ const WorkflowPage = () => {
               key={tab.key}
               type="button"
               onClick={() => navigate(tab.path)}
-              className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${active ? "bg-brand-600 text-white" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}
+              aria-current={active ? "page" : undefined}
+              className={`segmented-item ${active ? "is-active" : ""}`}
             >
               <Icon size={16} /> {tab.label}
             </button>
           );
         })}
-      </div>
+      </div> : null}
 
-      {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-700">{error}</div> : null}
-      {success ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-700">{success}</div> : null}
+      {error ? <div role="alert" className="alert alert-error"><XCircle size={18} /><span>{error}</span><button type="button" className="ml-auto text-xs font-semibold opacity-70 hover:opacity-100" onClick={() => setError("")}>Dismiss</button></div> : null}
+      {success ? <div role="status" className="alert alert-success"><CheckCircle2 size={18} /><span>{success}</span><button type="button" className="ml-auto text-xs font-semibold opacity-70 hover:opacity-100" onClick={() => setSuccess("")}>Dismiss</button></div> : null}
 
-      <div className="grid gap-5 xl:grid-cols-[380px_1fr]">
-        <form onSubmit={submit} className="h-fit rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-2">
-            <Plus size={18} className="text-brand-600" />
-            <h2 className="text-lg font-bold text-slate-950">Create {currentTab.key === "recurring" ? "Monthly Billing" : currentTab.label}</h2>
+      <div className="grid items-start gap-5 xl:grid-cols-[400px_minmax(0,1fr)]">
+        <form onSubmit={submit} noValidate className="panel h-fit p-5 xl:sticky xl:top-24">
+          <div className="flex items-center gap-3">
+            <span className="icon-chip"><Plus size={18} /></span>
+            <div>
+              <h2 className="text-base font-bold text-slate-950">Create {currentTab.key === "recurring" ? (isRealEstateClient ? "Monthly Billing" : "Recurring Profile") : currentTab.label}</h2>
+              {activeTab === "recurring" ? <p className="text-xs text-slate-500">Invoices are raised automatically on each billing date.</p> : null}
+            </div>
           </div>
-          <div className="mt-3 space-y-2">
-            {["orders", "recurring", "appointments", "dispatches"].includes(activeTab) ? (
-              <select className="input" value={form.customerId || ""} onChange={(e) => setForm({ ...form, customerId: e.target.value })}>
-                <option value="">Select customer</option>
-                {customers.map((customer) => <option key={customer._id || customer.id} value={customer._id || customer.id}>{customer.name}</option>)}
-              </select>
+
+          {activeTab === "recurring" ? (
+            <div className="mt-5 space-y-4">
+              <Field label="Client" error={fieldErrors.customerId}>
+                <select className="input" value={form.customerId || firstCustomer} onChange={(e) => updateField("customerId", e.target.value)}>
+                  {!customers.length ? <option value="">No clients yet</option> : null}
+                  {customers.map((customer) => <option key={customer._id || customer.id} value={customer._id || customer.id}>{customer.name}</option>)}
+                </select>
+              </Field>
+              {!customers.length ? <p className="-mt-2 text-xs text-slate-500"><Link to="/dashboard/customers" className="font-semibold text-brand-600">Add a client</Link> before creating monthly billing.</p> : null}
+
+              <Field label="Billing for" error={fieldErrors.productId} hint={recurringManualItem ? "It will be saved as a reusable service." : null}>
+                {products.length ? (
+                  <select className="input" value={form.productId || ""} onChange={(e) => {
+                    const value = e.target.value;
+                    const product = products.find((item) => String(item._id || item.id) === String(value));
+                    setForm((current) => ({ ...current, productId: value, rate: product ? product.sellingPrice ?? current.rate : current.rate, taxRate: product?.taxRate ?? current.taxRate }));
+                    setFieldErrors((current) => ({ ...current, productId: "", rate: "" }));
+                  }}>
+                    <option value="">Select a saved service</option>
+                    {products.map((product) => <option key={product._id || product.id} value={product._id || product.id}>{product.name}</option>)}
+                    <option value={MANUAL_ITEM}>+ Type a new service</option>
+                  </select>
+                ) : null}
+                {recurringManualItem ? (
+                  <input className={`input ${products.length ? "mt-2" : ""}`} placeholder="e.g. Cabin rent – Cabin 4" value={form.productName || ""} onChange={(e) => updateField("productName", e.target.value)} autoFocus={Boolean(products.length)} />
+                ) : null}
+              </Field>
+
+              <div className={`grid gap-3 ${recurringManualItem && business?.gstConfiguration?.enabled ? "grid-cols-[72px_1fr_88px]" : "grid-cols-[88px_1fr]"}`}>
+                <Field label="Qty" error={fieldErrors.quantity}>
+                  <input className="input" type="number" min="1" inputMode="decimal" value={form.quantity ?? "1"} onChange={(e) => updateField("quantity", e.target.value)} />
+                </Field>
+                <Field label="Rate (₹)" error={fieldErrors.rate}>
+                  <input className="input" type="number" min="0" step="0.01" inputMode="decimal" placeholder={selectedProduct ? String(selectedProduct.sellingPrice ?? "0") : "0.00"} value={form.rate ?? ""} onChange={(e) => updateField("rate", e.target.value)} />
+                </Field>
+                {recurringManualItem && business?.gstConfiguration?.enabled ? (
+                  <Field label="GST">
+                    <select className="input" value={form.taxRate ?? "18"} onChange={(e) => updateField("taxRate", e.target.value)}>
+                      {[0, 5, 12, 18, 28].map((rate) => <option key={rate} value={rate}>{rate}%</option>)}
+                    </select>
+                  </Field>
+                ) : null}
+              </div>
+
+              <div className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
+                <span className="text-slate-500">Amount per cycle <span className="text-xs">(before tax)</span></span>
+                <span className="font-bold text-slate-950">{money(recurringTotal)}</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="First billing date" error={fieldErrors.startDate}>
+                  <input className="input" type="date" value={form.startDate || new Date().toISOString().slice(0, 10)} onChange={(e) => updateField("startDate", e.target.value)} required />
+                </Field>
+                <Field label="Repeats">
+                  <select className="input" value={form.frequency || "MONTHLY"} onChange={(e) => updateField("frequency", e.target.value)}>
+                    <option value="MONTHLY">Monthly</option>{!isRealEstateClient ? <option value="WEEKLY">Weekly</option> : null}{!isRealEstateClient ? <option value="QUARTERLY">Quarterly</option> : null}{!isRealEstateClient ? <option value="HALF_YEARLY">Half-yearly</option> : null}{!isRealEstateClient ? <option value="YEARLY">Yearly</option> : null}
+                  </select>
+                </Field>
+              </div>
+
+              <GstLocationPreview
+                form={{ ...form, customerId: form.customerId || firstCustomer }}
+                setForm={setForm}
+                customers={customers}
+                lineItems={[{
+                  productId: form.productId && form.productId !== MANUAL_ITEM ? form.productId : undefined,
+                  productName: form.productId && form.productId !== MANUAL_ITEM ? undefined : form.productName,
+                  quantity: Number(form.quantity || 1),
+                  rate: Number(form.rate || 0),
+                  taxRate: selectedProduct?.taxRate ?? Number(form.taxRate ?? 18),
+                }]}
+              />
+
+              <Field label="Profile name" hint="Optional. Defaults to “Client monthly billing”.">
+                <input className="input" placeholder="e.g. Somil – Cabin 4 rent" value={form.name || ""} onChange={(e) => updateField("name", e.target.value)} />
+              </Field>
+
+              <button type="submit" disabled={saving || !customers.length} className="btn-primary w-full justify-center">
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus size={16} />} {saving ? "Saving…" : "Create billing profile"}
+              </button>
+            </div>
+          ) : (
+          <div className="mt-5 space-y-3">
+            {["orders", "appointments", "dispatches"].includes(activeTab) ? (
+              <Field label="Customer">
+                <select className="input" value={form.customerId || ""} onChange={(e) => setForm({ ...form, customerId: e.target.value })}>
+                  <option value="">{firstCustomer ? "Use first customer" : "Select customer"}</option>
+                  {customers.map((customer) => <option key={customer._id || customer.id} value={customer._id || customer.id}>{customer.name}</option>)}
+                </select>
+              </Field>
             ) : null}
-            {["projects", "recurring", "batches", "approvals"].includes(activeTab) ? (
-              <input className="input" placeholder={activeTab === "projects" ? "Project name" : activeTab === "recurring" ? "Profile name (optional)" : activeTab === "batches" ? "Batch number" : "Document title"} value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} required={activeTab !== "recurring"} />
+            {["projects", "batches", "approvals"].includes(activeTab) ? (
+              <Field label={activeTab === "projects" ? "Project name" : activeTab === "batches" ? "Batch number" : "Document title"}>
+                <input className="input" value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+              </Field>
             ) : null}
             {["tasks", "appointments", "production"].includes(activeTab) ? (
-              <input className="input" placeholder={activeTab === "tasks" ? "Task title" : activeTab === "appointments" ? "Site visit title" : "Production job title"} value={form.title || ""} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
+              <Field label={activeTab === "tasks" ? "Task title" : activeTab === "appointments" ? "Site visit title" : "Production job title"}>
+                <input className="input" value={form.title || ""} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
+              </Field>
             ) : null}
             {needsLineItem || ["production", "batches", "dispatches"].includes(activeTab) ? (
               <>
-                <select className="input" value={form.productId || ""} onChange={(e) => { const product = products.find((item) => String(item._id || item.id) === String(e.target.value)); setForm({ ...form, productId: e.target.value, rate: product?.sellingPrice ?? form.rate, taxRate: product?.taxRate ?? form.taxRate }); }}>
-                  <option value="">{activeTab === "production" ? "Select output product" : "Select product/service"}</option>
-                  {products.map((product) => <option key={product._id || product.id} value={product._id || product.id}>{product.name}</option>)}
-                </select>
+                <Field label={activeTab === "production" ? "Output product" : "Product / service"}>
+                  <select className="input" value={form.productId || ""} onChange={(e) => { const product = products.find((item) => String(item._id || item.id) === String(e.target.value)); setForm({ ...form, productId: e.target.value, rate: product?.sellingPrice ?? form.rate, taxRate: product?.taxRate ?? form.taxRate }); }}>
+                    <option value="">{products.length ? "Select…" : "No products yet"}</option>
+                    {products.map((product) => <option key={product._id || product.id} value={product._id || product.id}>{product.name}</option>)}
+                  </select>
+                </Field>
                 <div className="grid grid-cols-2 gap-3">
-                  <input className="input" type="number" min="1" placeholder="Qty" aria-label="Quantity" value={form.quantity || ""} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
-                  <input className="input" type="number" min="0" placeholder={selectedProduct ? `Rate: ${money(selectedProduct.sellingPrice)}` : "Rate"} aria-label="Rate" value={form.rate || ""} onChange={(e) => setForm({ ...form, rate: e.target.value })} />
+                  <Field label="Qty"><input className="input" type="number" min="1" value={form.quantity || ""} onChange={(e) => setForm({ ...form, quantity: e.target.value })} /></Field>
+                  {activeTab !== "batches" ? <Field label="Rate (₹)"><input className="input" type="number" min="0" placeholder={selectedProduct ? String(selectedProduct.sellingPrice ?? "") : ""} value={form.rate || ""} onChange={(e) => setForm({ ...form, rate: e.target.value })} /></Field> : null}
                 </div>
               </>
             ) : null}
             {activeTab === "production" ? (
-              <select className="input" value={form.inputProductId || ""} onChange={(e) => setForm({ ...form, inputProductId: e.target.value })}>
-                <option value="">Optional input product</option>
-                {products.map((product) => <option key={product._id || product.id} value={product._id || product.id}>{product.name}</option>)}
-              </select>
+              <Field label="Input product (optional)">
+                <select className="input" value={form.inputProductId || ""} onChange={(e) => setForm({ ...form, inputProductId: e.target.value })}>
+                  <option value="">None</option>
+                  {products.map((product) => <option key={product._id || product.id} value={product._id || product.id}>{product.name}</option>)}
+                </select>
+              </Field>
             ) : null}
             {activeTab === "batches" ? (
-              <div className="grid gap-3">
-                <input className="input" type="date" value={form.manufactureDate || ""} onChange={(e) => setForm({ ...form, manufactureDate: e.target.value })} />
-                <input className="input" type="date" value={form.expiryDate || ""} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} />
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Manufactured"><input className="input" type="date" value={form.manufactureDate || ""} onChange={(e) => setForm({ ...form, manufactureDate: e.target.value })} /></Field>
+                <Field label="Expires"><input className="input" type="date" value={form.expiryDate || ""} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} /></Field>
               </div>
             ) : null}
             {activeTab === "dispatches" ? (
-              <div className="grid gap-3">
-                <input className="input" placeholder="Carrier" value={form.carrier || ""} onChange={(e) => setForm({ ...form, carrier: e.target.value })} />
-                <input className="input" placeholder="Tracking number" value={form.trackingNumber || ""} onChange={(e) => setForm({ ...form, trackingNumber: e.target.value })} />
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Carrier"><input className="input" value={form.carrier || ""} onChange={(e) => setForm({ ...form, carrier: e.target.value })} /></Field>
+                <Field label="Tracking no."><input className="input" value={form.trackingNumber || ""} onChange={(e) => setForm({ ...form, trackingNumber: e.target.value })} /></Field>
               </div>
             ) : null}
             {activeTab === "tasks" ? (
-              <select className="input" value={form.projectId || ""} onChange={(e) => setForm({ ...form, projectId: e.target.value })}>
-                <option value="">Standalone task</option>
-                {projects.map((project) => <option key={project._id || project.id} value={project._id || project.id}>{project.name}</option>)}
-              </select>
-            ) : null}
-            {activeTab === "recurring" ? <GstLocationPreview form={form} setForm={setForm} customers={customers} lineItems={[{ productId: form.productId, quantity: Number(form.quantity || 1), rate: Number(form.rate || 0), taxRate: products.find(product => product._id === form.productId)?.taxRate || 0 }]} /> : null}
-            {activeTab === "recurring" ? (
-              <label className="text-xs font-medium">First billing date<input className="input mt-1" type="date" value={form.startDate || new Date().toISOString().slice(0, 10)} onChange={(e) => setForm({ ...form, startDate: e.target.value })} required /></label>
-            ) : null}
-            {activeTab === "recurring" ? (
-              <select className="input" value={form.frequency || "MONTHLY"} onChange={(e) => setForm({ ...form, frequency: e.target.value })}>
-                <option value="MONTHLY">Monthly</option>{!isRealEstateClient ? <option value="WEEKLY">Weekly</option> : null}{!isRealEstateClient ? <option value="QUARTERLY">Quarterly</option> : null}{!isRealEstateClient ? <option value="HALF_YEARLY">Half-yearly</option> : null}{!isRealEstateClient ? <option value="YEARLY">Yearly</option> : null}
-              </select>
+              <Field label="Project">
+                <select className="input" value={form.projectId || ""} onChange={(e) => setForm({ ...form, projectId: e.target.value })}>
+                  <option value="">Standalone task</option>
+                  {projects.map((project) => <option key={project._id || project.id} value={project._id || project.id}>{project.name}</option>)}
+                </select>
+              </Field>
             ) : null}
             {activeTab === "appointments" ? (
               <div className="grid gap-3">
-                <input className="input" type="datetime-local" value={form.startAt || ""} onChange={(e) => setForm({ ...form, startAt: e.target.value })} required />
-                <input className="input" type="datetime-local" value={form.endAt || ""} onChange={(e) => setForm({ ...form, endAt: e.target.value })} required />
+                <Field label="Starts"><input className="input" type="datetime-local" value={form.startAt || ""} onChange={(e) => setForm({ ...form, startAt: e.target.value })} required /></Field>
+                <Field label="Ends"><input className="input" type="datetime-local" value={form.endAt || ""} onChange={(e) => setForm({ ...form, endAt: e.target.value })} required /></Field>
               </div>
             ) : null}
             {activeTab === "projects" || activeTab === "tasks" || activeTab === "production" ? (
-              <input className="input" type="date" value={form.dueDate || ""} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} />
+              <Field label="Due date"><input className="input" type="date" value={form.dueDate || ""} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} /></Field>
             ) : null}
             <button type="submit" disabled={saving} className="btn-primary mt-2 w-full justify-center">
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus size={16} />} Save
             </button>
           </div>
+          )}
         </form>
 
         <div className="space-y-4">
-          <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+          <div className="panel grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
             <div className="relative min-w-0">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input aria-label={`Search ${currentTab.label}`} className="input w-full" style={{ paddingLeft: "2.5rem" }} placeholder={`Search ${currentTab.label.toLowerCase()}`} value={query} onChange={(e) => setQuery(e.target.value)} />
             </div>
-            <span className="whitespace-nowrap text-sm font-medium text-slate-500">{filtered.length} records</span>
+            <span className="whitespace-nowrap px-2 text-sm font-medium text-slate-500">{filtered.length} {filtered.length === 1 ? "record" : "records"}</span>
           </div>
           <div className="grid gap-4">{renderRows()}</div>
           {activeTab === "orders" ? <p className="text-xs text-slate-500">Order invoices are created through the existing BillStack invoice engine. Stock remains governed by invoice/inventory behavior.</p> : null}
-          {activeTab === "recurring" ? <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-xs leading-6 text-blue-800"><p className="font-semibold">How Monthly Billing works</p><p>Active profiles generate normal BillStack invoices on the next billing date. Generate now creates the current invoice once; payments are still recorded from the invoice or customer payment flow.</p></div> : null}
+          {activeTab === "recurring" ? <div className="alert alert-info text-xs leading-6"><RefreshCw size={16} /><div><p className="font-semibold">{isRealEstateClient ? "How Monthly Billing works" : "How recurring billing works"}</p><p>Active profiles generate normal BillStack invoices on the next billing date. Generate now creates the current invoice once; payments are still recorded from the invoice or customer payment flow.</p></div></div> : null}
           {activeTab === "appointments" ? <p className="text-xs text-slate-500">Site visit overlap checks are handled when assigning staff.</p> : null}
           <Link to="/dashboard" className="inline-flex text-sm font-semibold text-brand-600 hover:text-brand-700">Back to dashboard</Link>
         </div>
       </div>
-      {pendingDelete ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"><div role="dialog" aria-modal="true" aria-labelledby="delete-recurring-title" className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><h2 id="delete-recurring-title" className="text-lg font-bold text-slate-950">Delete monthly billing?</h2><p className="mt-2 text-sm text-slate-600">{pendingDelete.name} will be permanently removed. Generated invoices, if any, prevent deletion.</p><div className="mt-5 flex justify-end gap-2"><button type="button" className="btn-secondary" onClick={() => setPendingDelete(null)}>Keep it</button><button type="button" disabled={saving} className="btn-primary bg-rose-600" onClick={() => action(() => deleteRecurringProfileRequest(pendingDelete._id), "Monthly billing deleted.").then((deleted) => { if (deleted) setPendingDelete(null); })}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 size={15} />} Delete</button></div></div></div> : null}
+      {pendingDelete ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"><div role="dialog" aria-modal="true" aria-labelledby="delete-recurring-title" className="panel w-full max-w-md p-5 shadow-2xl"><h2 id="delete-recurring-title" className="text-lg font-bold text-slate-950">Delete monthly billing?</h2><p className="mt-2 text-sm text-slate-600">{pendingDelete.name} will be permanently removed. Generated invoices, if any, prevent deletion.</p><div className="mt-5 flex justify-end gap-2"><button type="button" className="btn-secondary" onClick={() => setPendingDelete(null)}>Keep it</button><button type="button" disabled={saving} className="btn-primary bg-rose-600" onClick={() => action(() => deleteRecurringProfileRequest(pendingDelete._id), "Monthly billing deleted.").then((deleted) => { if (deleted) setPendingDelete(null); })}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 size={15} />} Delete</button></div></div></div> : null}
     </div>
   );
 };

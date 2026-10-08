@@ -21,6 +21,7 @@ const { buildInventoryFlags } = require("./inventory.service");
 const { writeAuditLog } = require("./audit.service");
 const { createCustomerLedgerEntryOnce } = require("./ledger.service");
 const { dispatchInvoiceIssuedAutomation, scheduleWorkflowMessage } = require("./communication.service");
+const { cleanText, resolveOrCreateCatalogService } = require("./service-catalog.service");
 
 const ORDER_TRANSITIONS = {
   DRAFT: ["CONFIRMED", "CANCELLED"],
@@ -113,10 +114,28 @@ const nextNumber = ({ business, field, prefix, format, date = new Date() }) => {
   return value;
 };
 
-const normalizeLineItems = async ({ businessId, rawItems, session }) => {
-  const items = Array.isArray(rawItems) ? rawItems : [];
+const normalizeLineItems = async ({ businessId, rawItems, session, allowManualServices = false }) => {
+  let items = Array.isArray(rawItems) ? rawItems : [];
   if (!items.length) throw new AppError("At least one line item is required", 400);
-  items.forEach((item) => assertObjectId(item.productId, "product"));
+  if (allowManualServices) {
+    // Workspaces without a visible product catalog (e.g. office rental) bill typed services.
+    // Resolve each typed service to a reusable catalog entry so invoices keep a product reference.
+    items = await Promise.all(items.map(async (item) => {
+      if (item.productId && mongoose.Types.ObjectId.isValid(item.productId)) return item;
+      const typedName = cleanText(item.productName || item.serviceName || item.name);
+      if (!typedName) throw new AppError("Select a service or type the service name", 400);
+      const { product } = await resolveOrCreateCatalogService({
+        businessId,
+        item: { ...item, productName: typedName, serviceName: typedName },
+        session,
+      });
+      return { ...item, productId: product._id };
+    }));
+  }
+  items.forEach((item) => {
+    if (!item.productId) throw new AppError("Select a product or service for every line item", 400);
+    assertObjectId(item.productId, "product");
+  });
 
   const products = await Product.find({ _id: { $in: items.map((item) => item.productId) }, businessId }).session(session);
   const productMap = new Map(products.map((product) => [product._id.toString(), product]));
@@ -544,6 +563,7 @@ const createRecurringProfile = async ({ businessId, userId, payload }) => {
   const session = await mongoose.startSession();
   try {
     let profile;
+    if (!payload.customerId || !mongoose.Types.ObjectId.isValid(payload.customerId)) throw new AppError("Select a client for this billing profile", 400);
     await session.withTransaction(async () => {
       const [business, customer] = await Promise.all([
         Business.findById(businessId).session(session),
@@ -558,12 +578,12 @@ const createRecurringProfile = async ({ businessId, userId, payload }) => {
       const interval = Number(payload.interval || 1);
       if (!RECURRING_FREQUENCIES.includes(frequency)) throw new AppError("Invalid recurring billing frequency", 400);
       if (!Number.isInteger(interval) || interval <= 0) throw new AppError("Recurring interval must be a positive integer", 400);
-      const { lineItems, products } = await normalizeLineItems({ businessId, rawItems: payload.lineItems, session });
+      const { lineItems, products } = await normalizeLineItems({ businessId, rawItems: payload.lineItems, session, allowManualServices: true });
       const { totals } = buildTaxDocument({ business, counterparty: customer, products, lineItems, placeOfSupplyCode: payload.placeOfSupplyCode });
       [profile] = await RecurringBillingProfile.create([{
         businessId,
         customerId: customer._id,
-        name: payload.name,
+        name: cleanText(payload.name) || `${customer.name} ${frequency.toLowerCase().replace("_", "-")} billing`,
         description: payload.description || "",
         lineItems: totals.lineItems,
         placeOfSupplyCode: payload.placeOfSupplyCode || customer.placeOfSupplyCode || customer.stateCode || "",

@@ -10,6 +10,16 @@ import "./dashboard-home.css";
 
 const money = (value) => value == null || !Number.isFinite(Number(value)) ? "—" :
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(Number(value));
+// Indian short scale for chart axes: ₹70K, ₹1.4L, ₹2.5Cr (Intl's en-IN compact form prints "T").
+const compactRupees = (value) => {
+  const amount = Number(value || 0);
+  const abs = Math.abs(amount);
+  const fmt = (n, unit) => `₹${Number(n.toFixed(1)).toLocaleString("en-IN")}${unit}`;
+  if (abs >= 1e7) return fmt(amount / 1e7, "Cr");
+  if (abs >= 1e5) return fmt(amount / 1e5, "L");
+  if (abs >= 1e3) return fmt(amount / 1e3, "K");
+  return `₹${amount}`;
+};
 const date = (value) => !value || Number.isNaN(new Date(value).getTime()) ? "—" :
   new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
 const badgeTone = (status) => ({ paid: "bg-emerald-500/10 text-emerald-600", partial: "bg-amber-500/10 text-amber-700", unpaid: "bg-rose-500/10 text-rose-600" }[status] || "bg-slate-500/10 text-slate-500");
@@ -93,8 +103,8 @@ const DashboardHomePage = () => {
 
   return <div className="dashboard-home mx-auto max-w-[1500px] space-y-4 pb-4">
     <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-      <div><h2 className="text-2xl font-semibold tracking-tight">Good day, {user?.name?.split(" ")[0] || "there"}.</h2>
-        <p className="dashboard-muted mt-1 text-sm">Here's the financial pulse for <span className="font-medium text-[color:var(--text-primary)]">{business?.name || "your business"}</span>.</p></div>
+      <div><h1 className="page-title mt-0">Good day, {user?.name?.split(" ")[0] || "there"}.</h1>
+        <p className="page-subtitle">Here's the financial pulse for <span className="font-medium text-[color:var(--text-primary)]">{business?.name || "your business"}</span>.</p></div>
       <p className="dashboard-muted text-xs">{new Date().toLocaleDateString("en-IN", {weekday:"long",day:"numeric",month:"long",timeZone:"Asia/Kolkata"})}</p>
     </header>
     {quickActions.length ? <section aria-labelledby="dashboard-quick-actions" className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
@@ -115,7 +125,7 @@ const DashboardHomePage = () => {
             <defs><linearGradient id="dashboardSalesFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2563eb" stopOpacity={0.14}/><stop offset="100%" stopColor="#2563eb" stopOpacity={0}/></linearGradient></defs>
             <CartesianGrid vertical={false} stroke="rgba(100,116,139,.12)"/>
             <XAxis dataKey="month" tickLine={false} axisLine={false} minTickGap={24} tick={{fontSize:10,fill:"#64748b"}}/>
-            <YAxis width={64} tickFormatter={(value) => new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",notation:"compact",maximumFractionDigits:1}).format(value)} tickLine={false} axisLine={false} tick={{fontSize:10,fill:"#64748b"}}/>
+            <YAxis width={64} tickFormatter={compactRupees} tickLine={false} axisLine={false} tick={{fontSize:10,fill:"#64748b"}}/>
             <Tooltip formatter={(value) => [money(value),"Issued sales"]} contentStyle={{background:"var(--theme-surface-strong)",border:"1px solid var(--panel-border)",borderRadius:10,color:"var(--text-primary)",fontSize:12}}/>
             <Area name="Issued sales" type="monotone" dataKey="revenue" stroke="#2563eb" strokeWidth={2} fill="url(#dashboardSalesFill)" isAnimationActive={false} />
           </AreaChart>

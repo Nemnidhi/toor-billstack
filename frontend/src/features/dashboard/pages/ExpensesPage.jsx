@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleAlert, IndianRupee, Plus, ReceiptText, Search, X } from "lucide-react";
 import { EmptyState, LoadingState } from "../../../components/ui/PageState";
+import PageHeader from "../../../components/ui/PageHeader";
 import { uiStore } from "../../../store/uiStore";
 import { useCreateAction } from "../../workspace/useCreateAction";
 import {
@@ -32,6 +33,10 @@ const blankExpense = {
 const paymentStatuses = ["UNPAID", "PAID", "PARTIAL"];
 const paymentMethods = ["", "CASH", "BANK_TRANSFER", "CHEQUE", "UPI", "CARD", "OTHER"];
 const money = (value) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(value || 0));
+const humanize = (value) => {
+  const text = String(value || "").replaceAll("_", " ").toLowerCase();
+  return text === "upi" ? "UPI" : text.charAt(0).toUpperCase() + text.slice(1);
+};
 const date = (value) => (value ? new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—");
 
 const estimateExpenseTotal = (form) => {
@@ -139,40 +144,32 @@ const ExpensesPage = () => {
 
   return (
     <div className="mx-auto max-w-[1500px] space-y-6 pb-8">
-      <section className="rounded-2xl border p-5 sm:p-7" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}>
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-sm font-medium text-brand-600 dark:text-brand-300">Operating spend</p>
-            <h2 className="mt-2 text-3xl font-semibold tracking-tight">Expenses</h2>
-            <p className="mt-2 max-w-3xl text-sm" style={{ color: "var(--text-muted)" }}>
-              Record operating expenses separately from purchases. GST is recorded for reporting visibility only and is not treated as claimed input tax credit.
-            </p>
-          </div>
-          <button onClick={openCreate} className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white">
-            <Plus size={17} /> Add expense
-          </button>
-        </div>
-      </section>
+      <PageHeader
+        kicker="Operating spend"
+        title="Expenses"
+        description="Record operating expenses separately from purchases. GST is recorded for reporting only and is not claimed as input tax credit."
+        actions={<button type="button" onClick={openCreate} className="btn-primary"><Plus size={17} /> Add expense</button>}
+      />
 
-      {error ? <div className="flex justify-between rounded-xl border border-rose-500/25 bg-rose-500/5 p-4 text-sm text-rose-700 dark:text-rose-200"><span className="flex gap-2"><CircleAlert size={18} />{error}</span><button onClick={() => setError("")}><X size={16} /></button></div> : null}
+      {error ? <div role="alert" className="alert alert-error"><CircleAlert size={18} /><span className="flex-1">{error}</span><button type="button" aria-label="Dismiss" onClick={() => setError("")}><X size={16} /></button></div> : null}
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {[["Total expenses", summary.totalExpenses, "All active operating spend"], ["Paid", summary.paid, "Paid expense records"], ["Unpaid / partial", summary.unpaid, "Outstanding operating spend"], ["GST recorded", summary.gstRecorded, "Recorded, not claimed as ITC"]].map(([label, value, help]) => (
-          <div key={label} className="rounded-2xl border p-5" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}>
-            <div className="flex items-center justify-between"><p className="text-sm" style={{ color: "var(--text-muted)" }}>{label}</p><IndianRupee size={18} className="text-brand-500" /></div>
-            <p className="mt-3 text-2xl font-semibold">{money(value)}</p>
-            <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>{help}</p>
+      <section className="stat-grid">
+        {[["Total expenses", summary.totalExpenses, "All active operating spend", ""], ["Paid", summary.paid, "Paid expense records", "text-emerald-600"], ["Unpaid / partial", summary.unpaid, "Outstanding operating spend", Number(summary.unpaid) > 0 ? "text-amber-600" : ""], ["GST recorded", summary.gstRecorded, "Recorded, not claimed as ITC", ""]].map(([label, value, help, tone]) => (
+          <div key={label} className="panel stat-card">
+            <div className="flex items-center justify-between"><p className="stat-label">{label}</p><IndianRupee size={15} style={{ color: "var(--text-muted)" }} /></div>
+            <p className={`stat-value ${tone}`}>{money(value)}</p>
+            <p className="stat-detail">{help}</p>
           </div>
         ))}
       </section>
 
-      <section className="rounded-2xl border" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}>
+      <section className="panel overflow-hidden">
         <div className="grid gap-3 border-b p-4 lg:grid-cols-[minmax(220px,1fr)_180px_160px_150px_150px]" style={{ borderColor: "var(--panel-border)" }}>
-          <label className="relative"><Search size={16} className="absolute left-3 top-3" style={{ color: "var(--text-muted)" }} /><input value={filters.search} onChange={(e) => updateFilter("search", e.target.value)} placeholder="Search expense, vendor, reference" className="field pl-9" /></label>
+          <label className="relative"><span className="sr-only">Search expenses</span><Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} /><input value={filters.search} onChange={(e) => updateFilter("search", e.target.value)} placeholder="Search expense, vendor, reference" className="field pl-9" /></label>
           <select value={filters.category} onChange={(e) => updateFilter("category", e.target.value)} className="field"><option value="">All categories</option>{categories.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-          <select value={filters.paymentStatus} onChange={(e) => updateFilter("paymentStatus", e.target.value)} className="field"><option value="">All statuses</option>{paymentStatuses.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-          <input type="date" value={filters.from} onChange={(e) => updateFilter("from", e.target.value)} className="field" />
-          <input type="date" value={filters.to} onChange={(e) => updateFilter("to", e.target.value)} className="field" />
+          <select value={filters.paymentStatus} onChange={(e) => updateFilter("paymentStatus", e.target.value)} className="field"><option value="">All statuses</option>{paymentStatuses.map((item) => <option key={item} value={item}>{humanize(item)}</option>)}</select>
+          <input type="date" aria-label="From date" value={filters.from} onChange={(e) => updateFilter("from", e.target.value)} className="field" />
+          <input type="date" aria-label="To date" value={filters.to} onChange={(e) => updateFilter("to", e.target.value)} className="field" />
         </div>
         {loading ? <div className="p-6"><LoadingState title="Loading expenses" description="Fetching operating spend records." /></div> : result.items.length ? (
           <div className="overflow-x-auto">
@@ -182,13 +179,13 @@ const ExpensesPage = () => {
               </thead>
               <tbody>{result.items.map((expense) => (
                 <tr key={expense._id} className="border-t" style={{ borderColor: "var(--panel-border)" }}>
-                  <td className="p-4 font-semibold">{expense.expenseNumber}</td>
-                  <td className="p-4">{date(expense.expenseDate)}</td>
+                  <td className="p-4 whitespace-nowrap font-semibold">{expense.expenseNumber}</td>
+                  <td className="p-4 whitespace-nowrap">{date(expense.expenseDate)}</td>
                   <td className="p-4">{expense.category}{expense.customCategory ? ` / ${expense.customCategory}` : ""}</td>
                   <td className="p-4">{expense.vendorName || expense.supplierId?.supplierName || "—"}<p className="text-xs" style={{ color: "var(--text-muted)" }}>{expense.description || ""}</p></td>
-                  <td className="p-4 text-right font-semibold">{money(expense.totalAmount)}</td>
-                  <td className="p-4 text-right">{money(expense.taxAmount)}<p className="text-xs" style={{ color: "var(--text-muted)" }}>{expense.gstType === "GST_RECORDED" ? `${expense.gstRate}% recorded` : expense.gstType}</p></td>
-                  <td className="p-4"><StatusPill value={expense.paymentStatus} /><p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>Paid {money(expense.paidAmount)} · Due {money(expense.balanceAmount)}</p><p className="text-xs" style={{ color: "var(--text-muted)" }}>{expense.paymentMethod || "No method"}</p></td>
+                  <td className="p-4 whitespace-nowrap text-right font-semibold">{money(expense.totalAmount)}</td>
+                  <td className="p-4 whitespace-nowrap text-right">{money(expense.taxAmount)}<p className="text-xs" style={{ color: "var(--text-muted)" }}>{expense.gstType === "GST_RECORDED" ? `${expense.gstRate}% recorded` : expense.gstType === "NONE" ? "No GST" : humanize(expense.gstType)}</p></td>
+                  <td className="p-4"><StatusPill value={expense.paymentStatus} /><p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>Paid {money(expense.paidAmount)} · Due {money(expense.balanceAmount)}</p><p className="text-xs" style={{ color: "var(--text-muted)" }}>{expense.paymentMethod ? humanize(expense.paymentMethod) : "No method"}</p></td>
                   <td className="p-4 text-right"><div className="flex justify-end gap-2"><button onClick={() => openEdit(expense)} disabled={expense.status === "CANCELLED"} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-40" style={{ borderColor: "var(--panel-border)" }}>Edit</button><button onClick={() => cancelExpense(expense)} disabled={expense.status === "CANCELLED"} className="rounded-lg border border-rose-500/25 px-3 py-1.5 text-xs text-rose-600 disabled:opacity-40">{expense.status === "CANCELLED" ? "Cancelled" : "Cancel"}</button></div></td>
                 </tr>
               ))}</tbody>
@@ -218,8 +215,8 @@ const ExpensesPage = () => {
 };
 
 const StatusPill = ({ value }) => {
-  const color = value === "PAID" ? "emerald" : value === "PARTIAL" ? "amber" : "slate";
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${color === "emerald" ? "bg-emerald-500/10 text-emerald-600" : color === "amber" ? "bg-amber-500/10 text-amber-600" : "bg-slate-500/10 text-slate-500"}`}>{value}</span>;
+  const tone = value === "PAID" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : value === "PARTIAL" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : "bg-rose-500/10 text-rose-700 dark:text-rose-300";
+  return <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${tone}`}><span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />{value === "PARTIAL" ? "Partly paid" : humanize(value)}</span>;
 };
 
 const ExpenseModal = ({ form, setForm, categories, saving, error, estimatedTotal, mode, onSave, onClose }) => (
@@ -233,8 +230,8 @@ const ExpenseModal = ({ form, setForm, categories, saving, error, estimatedTotal
         <Field label="Vendor / payee"><input value={form.vendorName || ""} onChange={(e) => setForm("vendorName", e.target.value)} className="field" /></Field>
         <Field label="Amount before GST"><input required min="0" step="0.01" type="number" value={form.amountBeforeTax || ""} onChange={(e) => setForm("amountBeforeTax", e.target.value)} className="field" /></Field>
         <Field label="Paid amount"><input min="0" step="0.01" type="number" value={form.paidAmount || ""} onChange={(e) => setForm("paidAmount", e.target.value)} className="field" /></Field>
-        <Field label="Payment status"><select value={form.paymentStatus || "UNPAID"} onChange={(e) => setForm("paymentStatus", e.target.value)} className="field">{paymentStatuses.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
-        <Field label="Payment method"><select value={form.paymentMethod || ""} onChange={(e) => setForm("paymentMethod", e.target.value)} className="field">{paymentMethods.map((item) => <option key={item} value={item}>{item || "Not recorded"}</option>)}</select></Field>
+        <Field label="Payment status"><select value={form.paymentStatus || "UNPAID"} onChange={(e) => setForm("paymentStatus", e.target.value)} className="field">{paymentStatuses.map((item) => <option key={item} value={item}>{humanize(item)}</option>)}</select></Field>
+        <Field label="Payment method"><select value={form.paymentMethod || ""} onChange={(e) => setForm("paymentMethod", e.target.value)} className="field">{paymentMethods.map((item) => <option key={item} value={item}>{item ? humanize(item) : "Not recorded"}</option>)}</select></Field>
         <Field label="Reference number"><input value={form.referenceNumber || ""} onChange={(e) => setForm("referenceNumber", e.target.value)} className="field" /></Field>
       </div>
       <div className="mt-5 rounded-xl border p-4" style={{ borderColor: "var(--panel-border)" }}>
