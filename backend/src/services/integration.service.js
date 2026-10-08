@@ -67,19 +67,34 @@ const customerUpdates = (input, supplied = {}) => Object.fromEntries(
     .map((field) => [field, input[field]])
 );
 
+const nameKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const sameName = (a, b) => {
+  const [x, y] = [nameKey(a), nameKey(b)];
+  return Boolean(x) && x === y;
+};
+
+// The CRM external ID is the authoritative identity. Phone/email/GSTIN are only
+// hints used to avoid duplicates for a brand-new mapping. Shared contact details
+// (one person managing several CRM clients, placeholder numbers, etc.) must
+// never block billing, so ambiguity resolves to "create a separate customer"
+// instead of an HTTP 409.
 const findCustomerIdentityMatches = async ({ businessId, input, session }) => {
-  const matches = new Map();
-  const identifiers = [
-    input.gstNumber && { gstNumber: input.gstNumber },
+  if (input.gstNumber) {
+    const rows = await Customer.find({ businessId, gstNumber: input.gstNumber }).sort({ createdAt: 1 }).limit(5).session(session);
+    const byName = rows.find((row) => sameName(row.name, input.name));
+    if (byName) return byName;
+    if (rows.length === 1) return rows[0];
+  }
+  const hints = [
     input.phone && { phone: { $regex: new RegExp(`^\\D*${input.phone.split("").join("\\D*")}\\D*$`) } },
     input.email && { email: input.email },
   ].filter(Boolean);
-  for (const identifier of identifiers) {
-    const rows = await Customer.find({ businessId, ...identifier }).limit(2).session(session);
-    rows.forEach((row) => matches.set(row._id.toString(), row));
+  for (const hint of hints) {
+    const rows = await Customer.find({ businessId, ...hint }).limit(5).session(session);
+    const byName = rows.filter((row) => sameName(row.name, input.name));
+    if (byName.length === 1) return byName[0];
   }
-  if (matches.size > 1) throw new AppError("Customer identifiers match different existing customers", 409);
-  return matches.values().next().value || null;
+  return null;
 };
 
 const syncExternalCustomer = async ({ credential, payload }) => {
@@ -90,10 +105,15 @@ const syncExternalCustomer = async ({ credential, payload }) => {
     await session.withTransaction(async () => {
       const mapping = await IntegrationCustomerMapping.findOne({ businessId: credential.businessId, source: input.source, externalId: input.externalId }).session(session);
       if (mapping) {
-        const customer = await Customer.findOne({ _id: mapping.customerId, businessId: credential.businessId }).session(session);
-        if (!customer) throw new AppError("Linked customer no longer exists", 409);
-        const identityMatch = await findCustomerIdentityMatches({ businessId: credential.businessId, input, session });
-        if (identityMatch && identityMatch._id.toString() !== customer._id.toString()) throw new AppError("Customer identifiers conflict with another existing customer", 409);
+        let customer = await Customer.findOne({ _id: mapping.customerId, businessId: credential.businessId }).session(session);
+        if (!customer) {
+          // The linked customer was deleted in BillStack: recreate it and re-point the mapping.
+          [customer] = await Customer.create([{ businessId: credential.businessId, ...customerUpdates(input, payload) }], { session });
+          await IntegrationCustomerMapping.collection.updateOne({ _id: mapping._id }, { $set: { customerId: customer._id, lastSyncedAt: new Date() } }, { session });
+          const refreshed = await IntegrationCustomerMapping.findById(mapping._id).session(session);
+          result = { customer, mapping: refreshed, outcome: "created" };
+          return;
+        }
         // Explicit blank attributes clear this established mapping's fields.
         // Omitted fields and initial linking retain the existing behavior.
         const updates = customerUpdates(input, payload);

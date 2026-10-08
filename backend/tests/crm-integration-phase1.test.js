@@ -17,7 +17,11 @@ test("GSTIN state conflicts are rejected", () => assert.throws(() => service.nor
 test("external mapping enforces tenant source identity uniqueness", () => assert.match(read("src", "models", "IntegrationCustomerMapping.js"), /businessId: 1, source: 1, externalId: 1.*unique: true/));
 test("same external identity follows mapped customer path", () => assert.match(read("src", "services", "integration.service.js"), /IntegrationCustomerMapping\.findOne[\s\S]*outcome: changed \? "updated" : "already_synced"/));
 test("same-business matching supports GSTIN phone and email", () => assert.match(read("src", "services", "integration.service.js"), /input\.gstNumber[\s\S]*input\.phone[\s\S]*input\.email/));
-test("conflicting customer identity fails safely", () => assert.match(read("src", "services", "integration.service.js"), /identifiers match different existing customers/));
+test("shared contact identifiers never block a mapped CRM customer", () => {
+  const source = read("src", "services", "integration.service.js");
+  assert.doesNotMatch(source, /identifiers match different existing customers/);
+  assert.doesNotMatch(source, /conflict with another existing customer/);
+});
 test("customer creation and mapping use a transaction", () => assert.match(read("src", "services", "integration.service.js"), /syncExternalCustomer[\s\S]*withTransaction/));
 test("existing external order endpoint is preserved", () => assert.match(read("src", "routes", "integration.routes.js"), /router\.post\("\/orders", integrationAuthMiddleware, ingestOrder\)/));
 test("handoff customer lookup is tenant scoped", () => assert.match(read("src", "services", "integration.service.js"), /Customer\.findOne\(\{ _id: payload\.customerId, businessId: credential\.businessId \}\)/));
