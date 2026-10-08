@@ -108,7 +108,100 @@ async function listCatalogServices({ businessId, search = "", status = "active",
   return query;
 }
 
+/**
+ * Services this business has billed before, for item pickers: saved catalog entries
+ * plus every distinct item name used on invoices, quotations and billing profiles.
+ * One row per name (case/spacing-insensitive); the most recent use supplies the
+ * default rate, GST rate and HSN/SAC.
+ */
+async function listServiceSuggestions({ businessId, limit = 200 }) {
+  const Invoice = require("../models/Invoice");
+  const Quote = require("../models/Quote");
+  const RecurringBillingProfile = require("../models/RecurringBillingProfile");
+  const id = new (require("mongoose").Types.ObjectId)(String(businessId));
+
+  const usage = (dateField, extraMatch = {}) => [
+    { $match: { businessId: id, ...extraMatch } },
+    { $sort: { [dateField]: -1, _id: -1 } },
+    { $limit: 2000 },
+    { $unwind: "$lineItems" },
+    { $match: { "lineItems.productName": { $type: "string", $ne: "" } } },
+    { $project: {
+      name: "$lineItems.productName",
+      productId: "$lineItems.productId",
+      rate: "$lineItems.rate",
+      taxRate: "$lineItems.taxRate",
+      hsnSac: "$lineItems.hsnSac",
+      gstClassification: "$lineItems.gstClassification",
+      usedAt: `$${dateField}`,
+    } },
+  ];
+
+  const [catalog, invoiceRows, quoteRows, recurringRows] = await Promise.all([
+    Product.find({ businessId: id, status: { $ne: "inactive" } }).sort("name").limit(500).lean(),
+    Invoice.aggregate(usage("invoiceDate", { status: { $ne: "cancelled" } })),
+    Quote.aggregate(usage("createdAt")),
+    RecurringBillingProfile.aggregate(usage("createdAt")),
+  ]);
+
+  const byName = new Map();
+  const keyOf = (name) => cleanText(name).toLowerCase();
+
+  for (const product of catalog) {
+    const key = keyOf(product.name);
+    if (!key || byName.has(key)) continue;
+    byName.set(key, {
+      key,
+      productId: product._id,
+      name: cleanText(product.name),
+      rate: Number(product.sellingPrice || 0),
+      taxRate: Number(product.taxRate || 0),
+      hsnSac: product.hsnSac || "",
+      gstClassification: product.gstClassification || "TAXABLE",
+      source: "catalog",
+      uses: 0,
+      lastUsedAt: null,
+    });
+  }
+
+  const history = [...invoiceRows, ...quoteRows, ...recurringRows]
+    .sort((a, b) => new Date(b.usedAt || 0) - new Date(a.usedAt || 0));
+  for (const row of history) {
+    const key = keyOf(row.name);
+    if (!key) continue;
+    const existing = byName.get(key);
+    if (existing) {
+      existing.uses += 1;
+      if (!existing.lastUsedAt) {
+        existing.lastUsedAt = row.usedAt || null;
+        // Catalog price stays the default; history only fills gaps.
+        if (existing.source === "history") Object.assign(existing, { rate: Number(row.rate || 0), taxRate: Number(row.taxRate || 0) });
+      }
+      continue;
+    }
+    byName.set(key, {
+      key,
+      productId: row.productId || null,
+      name: cleanText(row.name),
+      rate: Number(row.rate || 0),
+      taxRate: Number(row.taxRate || 0),
+      hsnSac: row.hsnSac || "",
+      gstClassification: row.gstClassification || "TAXABLE",
+      source: "history",
+      uses: 1,
+      lastUsedAt: row.usedAt || null,
+    });
+  }
+
+  return [...byName.values()]
+    .sort((a, b) => (a.source === b.source ? 0 : a.source === "catalog" ? -1 : 1)
+      || new Date(b.lastUsedAt || 0) - new Date(a.lastUsedAt || 0)
+      || a.name.localeCompare(b.name))
+    .slice(0, limit);
+}
+
 module.exports = {
+  listServiceSuggestions,
   cleanText,
   escapeRegex,
   extractCanonicalServiceName,

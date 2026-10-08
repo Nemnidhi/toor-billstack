@@ -69,4 +69,8 @@ else
   echo "WARNING: health check on port $PORT did not answer. Check logs: pm2 logs  OR  journalctl -u <service> -n 50"
 fi
 
+say "Checking for duplicate billing companies (preview only, nothing is changed)"
+(cd backend && node src/scripts/repair-billing-entities.js) || echo "Preview could not run; check MONGO_URI in backend/.env"
+echo "If changes are listed above, apply them with: cd $APP_DIR/backend && node src/scripts/repair-billing-entities.js --apply"
+
 say "Done. Open the site and press Ctrl+F5."

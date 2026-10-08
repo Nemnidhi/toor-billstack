@@ -713,3 +713,9 @@ export const updateTeamMemberRequest = async (userId, payload) => {
 export const deleteTeamMemberRequest = async (userId) => {
   await api.delete(`/team/${userId}`);
 };
+
+// Saved catalog services plus every item name used on past invoices, quotations and billing profiles.
+export const listServiceSuggestionsRequest = async () => {
+  const response = await api.get("/invoices/service-suggestions");
+  return response.data.data || [];
+};

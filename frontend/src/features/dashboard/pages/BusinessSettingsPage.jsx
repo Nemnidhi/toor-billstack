@@ -354,8 +354,8 @@ const BusinessSettingsPage = () => {
 
   return (
     <div className="space-y-6">
+      <PageHeader kicker="Admin" title="Settings" description="Manage your billing companies, GST, invoices and payment details." />
       <BillingEntitySettings />
-      <PageHeader kicker="Admin" title="Billing company settings" description="Manage your company, GST, invoices and payment details." />
       <nav aria-label="Settings sections" className="segmented no-scrollbar">
         {["Business Profile", "GST & Tax", "Invoice & Payment", "Branding", "Communications", ...(visibility.inventory ? ["Inventory"] : [])].map(label => <button key={label} type="button" onClick={() => { setSection(label); setSaveError(""); setFieldErrors({}); setSaved(false); }} aria-pressed={section === label} className={`segmented-item ${section === label ? "is-active" : ""}`}>{label}</button>)}
       </nav>

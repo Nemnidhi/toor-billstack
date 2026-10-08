@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { authStore } from "../../../store/authStore";
 import GstLocationPreview from "../GstLocationPreview";
+import { findSuggestion, groupSuggestions, suggestionValue, useServiceSuggestions } from "../serviceSuggestions";
 import { isActiveModule, isRealEstateSelfHostedWorkspace, shouldShowWorkspaceNavigation } from "../../workspace/workspaceVisibility";
 import {
   createAppointmentRequest,
@@ -237,7 +238,16 @@ const WorkflowPage = () => {
   const firstUser = team[0]?._id || team[0]?.id || "";
   const selectedProduct = products.find((product) => String(product._id || product.id) === String(form.productId || ""));
   // Workspaces without a product catalog (e.g. office rental) type the service directly.
-  const recurringManualItem = activeTab === "recurring" && (!products.length || form.productId === MANUAL_ITEM);
+  // Services billed before (catalog + past invoices/quotations) feed the Monthly Billing picker.
+  const suggestions = useServiceSuggestions(activeTab === "recurring" ? data.length : -1);
+  const serviceOptions = suggestions.length
+    ? suggestions
+    : products.map((product) => ({ key: String(product._id || product.id), productId: product._id || product.id, name: product.name, rate: product.sellingPrice, taxRate: product.taxRate, source: "catalog" }));
+  const serviceGroups = groupSuggestions(serviceOptions);
+  const chosenService = findSuggestion(serviceOptions, form.serviceKey);
+  const recurringManualItem = activeTab === "recurring" && (!serviceOptions.length || form.serviceKey === MANUAL_ITEM);
+  const recurringHasService = recurringManualItem || Boolean(chosenService);
+  const recurringNeedsGst = recurringHasService && !chosenService?.productId && Boolean(business?.gstConfiguration?.enabled);
   const recurringTotal = Number(form.quantity || 1) * Number(form.rate || 0);
   const updateField = (field, value) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -247,9 +257,10 @@ const WorkflowPage = () => {
   const validateRecurring = () => {
     const errors = {};
     if (!(form.customerId || firstCustomer)) errors.customerId = "Add or select a client first.";
-    const productId = form.productId && form.productId !== MANUAL_ITEM ? form.productId : "";
-    if (!productId && !String(form.productName || "").trim()) {
-      errors.productId = recurringManualItem ? "Type what you are billing for, e.g. Cabin rent." : "Select a service or choose “Type a new service”.";
+    if (!recurringHasService) {
+      errors.productId = "Pick a service, or choose “Type a new service”.";
+    } else if (String(form.productName || "").trim().length < 2) {
+      errors.productName = "Write what this invoice is for, e.g. Cabin rent – Cabin 4.";
     }
     const quantity = Number(form.quantity || 1);
     if (!Number.isFinite(quantity) || quantity <= 0) errors.quantity = "Must be more than 0.";
@@ -282,7 +293,7 @@ const WorkflowPage = () => {
       if (activeTab === "recurring") {
         if (!validateRecurring()) return;
         const selectedCustomer = customers.find((customer) => String(customer._id || customer.id) === String(form.customerId || firstCustomer));
-        const productId = form.productId && form.productId !== MANUAL_ITEM ? form.productId : undefined;
+        const productId = chosenService?.productId || undefined;
         const createdProfile = await createRecurringProfileRequest({
           placeOfSupplyCode: form.placeOfSupplyCode,
           customerId: form.customerId || firstCustomer,
@@ -291,7 +302,7 @@ const WorkflowPage = () => {
           startDate: form.startDate || new Date().toISOString().slice(0, 10),
           lineItems: [{
             productId,
-            productName: productId ? undefined : String(form.productName || "").trim(),
+            productName: String(form.productName || "").trim(),
             quantity: Number(form.quantity || 1),
             rate: Number(form.rate || 0),
             taxRate: productId ? undefined : Number(form.taxRate ?? (business?.gstConfiguration?.enabled ? 18 : 0)),
@@ -648,32 +659,46 @@ const WorkflowPage = () => {
               </Field>
               {!customers.length ? <p className="-mt-2 text-xs text-slate-500"><Link to="/dashboard/customers" className="font-semibold text-brand-600">Add a client</Link> before creating monthly billing.</p> : null}
 
-              <Field label="Billing for" error={fieldErrors.productId} hint={recurringManualItem ? "It will be saved as a reusable service." : null}>
-                {products.length ? (
-                  <select className="input" value={form.productId || ""} onChange={(e) => {
+              <Field label="Service" error={fieldErrors.productId} hint={!serviceOptions.length ? "Nothing billed yet. Type the service; it will be remembered next time." : null}>
+                {serviceOptions.length ? (
+                  <select className="input" value={form.serviceKey || ""} onChange={(e) => {
                     const value = e.target.value;
-                    const product = products.find((item) => String(item._id || item.id) === String(value));
-                    setForm((current) => ({ ...current, productId: value, rate: product ? product.sellingPrice ?? current.rate : current.rate, taxRate: product?.taxRate ?? current.taxRate }));
-                    setFieldErrors((current) => ({ ...current, productId: "", rate: "" }));
+                    const item = findSuggestion(serviceOptions, value);
+                    setForm((current) => item
+                      ? { ...current, serviceKey: value, productName: item.name, rate: item.rate ? String(item.rate) : current.rate, taxRate: item.taxRate ?? current.taxRate }
+                      : { ...current, serviceKey: value, productName: value === MANUAL_ITEM ? "" : current.productName });
+                    setFieldErrors((current) => ({ ...current, productId: "", productName: "", rate: "" }));
                   }}>
-                    <option value="">Select a saved service</option>
-                    {products.map((product) => <option key={product._id || product.id} value={product._id || product.id}>{product.name}</option>)}
+                    <option value="">Select a service</option>
+                    {serviceGroups.saved.length ? (
+                      <optgroup label="Saved services">
+                        {serviceGroups.saved.map((item) => <option key={suggestionValue(item)} value={suggestionValue(item)}>{item.name}{item.rate ? ` · ${money(item.rate)}` : ""}</option>)}
+                      </optgroup>
+                    ) : null}
+                    {serviceGroups.history.length ? (
+                      <optgroup label="Used on previous invoices">
+                        {serviceGroups.history.map((item) => <option key={suggestionValue(item)} value={suggestionValue(item)}>{item.name}{item.rate ? ` · ${money(item.rate)}` : ""}</option>)}
+                      </optgroup>
+                    ) : null}
                     <option value={MANUAL_ITEM}>+ Type a new service</option>
                   </select>
                 ) : null}
-                {recurringManualItem ? (
-                  <input className={`input ${products.length ? "mt-2" : ""}`} placeholder="e.g. Cabin rent – Cabin 4" value={form.productName || ""} onChange={(e) => updateField("productName", e.target.value)} autoFocus={Boolean(products.length)} />
-                ) : null}
               </Field>
 
-              <div className={`grid gap-3 ${recurringManualItem && business?.gstConfiguration?.enabled ? "grid-cols-[72px_1fr_88px]" : "grid-cols-[88px_1fr]"}`}>
+              {recurringHasService ? (
+                <Field label="Description on invoice" error={fieldErrors.productName} hint="Printed on every invoice. Add details like cabin or seat number.">
+                  <input className="input" placeholder="e.g. Cabin rent – Cabin 4" value={form.productName || ""} onChange={(e) => updateField("productName", e.target.value)} autoFocus={recurringManualItem && serviceOptions.length > 0} />
+                </Field>
+              ) : null}
+
+              <div className={`grid gap-3 ${recurringNeedsGst ? "grid-cols-[72px_1fr_88px]" : "grid-cols-[88px_1fr]"}`}>
                 <Field label="Qty" error={fieldErrors.quantity}>
                   <input className="input" type="number" min="1" inputMode="decimal" value={form.quantity ?? "1"} onChange={(e) => updateField("quantity", e.target.value)} />
                 </Field>
                 <Field label="Rate (₹)" error={fieldErrors.rate}>
-                  <input className="input" type="number" min="0" step="0.01" inputMode="decimal" placeholder={selectedProduct ? String(selectedProduct.sellingPrice ?? "0") : "0.00"} value={form.rate ?? ""} onChange={(e) => updateField("rate", e.target.value)} />
+                  <input className="input" type="number" min="0" step="0.01" inputMode="decimal" placeholder={chosenService?.rate ? String(chosenService.rate) : "0.00"} value={form.rate ?? ""} onChange={(e) => updateField("rate", e.target.value)} />
                 </Field>
-                {recurringManualItem && business?.gstConfiguration?.enabled ? (
+                {recurringNeedsGst ? (
                   <Field label="GST">
                     <select className="input" value={form.taxRate ?? "18"} onChange={(e) => updateField("taxRate", e.target.value)}>
                       {[0, 5, 12, 18, 28].map((rate) => <option key={rate} value={rate}>{rate}%</option>)}
@@ -703,11 +728,11 @@ const WorkflowPage = () => {
                 setForm={setForm}
                 customers={customers}
                 lineItems={[{
-                  productId: form.productId && form.productId !== MANUAL_ITEM ? form.productId : undefined,
-                  productName: form.productId && form.productId !== MANUAL_ITEM ? undefined : form.productName,
+                  productId: chosenService?.productId || undefined,
+                  productName: form.productName,
                   quantity: Number(form.quantity || 1),
                   rate: Number(form.rate || 0),
-                  taxRate: selectedProduct?.taxRate ?? Number(form.taxRate ?? 18),
+                  taxRate: chosenService?.productId ? Number(chosenService.taxRate || 0) : Number(form.taxRate ?? 18),
                 }]}
               />
 

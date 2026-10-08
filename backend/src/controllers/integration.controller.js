@@ -69,10 +69,7 @@ const consumeInvoiceHandoff = asyncHandler(async (req, res) => {
 
   let targetBusinessId = handoff.businessId;
   if (handoff.billingContext?.billingEntityCode === "GOLDHAWK") {
-    let goldhawk = await Business.findOne({
-      billingParentId: handoff.businessId,
-      billingEntityCode: "GOLDHAWK",
-    });
+    let goldhawk = await require("../services/billing-entity.service").findGroupEntity(handoff.businessId, "GOLDHAWK");
     if (!goldhawk) {
       const { ensureGoldhawk } = require("../services/billing-entity.service");
       goldhawk = await ensureGoldhawk(req.identityUser);
