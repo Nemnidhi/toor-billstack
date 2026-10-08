@@ -84,7 +84,7 @@ const AccountingReportsPage = () => {
         getAccountsRequest().catch((e) => []),
       ]);
 
-      if (!pl && !bs && loadErr) {
+      if ((!pl || !bs) && loadErr) {
         setError(loadErr.response?.data?.message || "Failed to load financial reports.");
       }
 
@@ -402,7 +402,11 @@ const AccountingReportsPage = () => {
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
               <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Balance Sheet Status</span>
               <div className="mt-2 flex items-center gap-2 text-2xl font-bold text-slate-900 dark:text-white">
-                {bsData?.totals?.isBalanced ? (
+                {!bsData?.totals ? (
+                  <span className="flex items-center gap-1.5 text-base text-slate-500 font-semibold">
+                    <AlertTriangle className="h-5 w-5" /> Not available
+                  </span>
+                ) : bsData.totals.isBalanced ? (
                   <span className="flex items-center gap-1.5 text-base text-emerald-600 font-semibold">
                     <CheckCircle2 className="h-5 w-5" /> Balanced (A = L + E)
                   </span>
@@ -413,7 +417,9 @@ const AccountingReportsPage = () => {
                 )}
               </div>
               <div className="mt-1 text-xs text-slate-400">
-                Assets: {money(bsData?.totals?.totalAssets)} | Liab+Eq: {money(bsData?.totals?.totalLiabilitiesAndEquity)}
+                {bsData?.totals
+                  ? <>Assets: {money(bsData.totals.totalAssets)} | Liab+Eq: {money(bsData.totals.totalLiabilitiesAndEquity)}</>
+                  : "The balance sheet could not be loaded. Use refresh, or check the selected company."}
               </div>
             </div>
           </div>

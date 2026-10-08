@@ -55,6 +55,15 @@ const authorizeAccountingReport = async (req, _res, next) => {
         }
       }
 
+      // Consolidation needs a Goldhawk entity to combine with. A single-company
+      // workspace has none, so report that company directly instead of failing.
+      const hasGoldhawk = groupEntities.some((g) => g.billingEntityCode === "GOLDHAWK" && String(g._id) !== String(rootBusinessId));
+      if (!hasGoldhawk) {
+        const scopedUser = await resolveEntityUser(req.user, rootBusinessId);
+        req.accountingScope = { isConsolidated: false, businessId: rootBusinessId, role: scopedUser.role };
+        return next();
+      }
+
       req.accountingScope = {
         isConsolidated: true,
         homeBusinessId: rootBusinessId,
