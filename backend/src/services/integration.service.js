@@ -76,8 +76,8 @@ const sameName = (a, b) => {
 // The CRM external ID is the authoritative identity. Phone/email/GSTIN are only
 // hints used to avoid duplicates for a brand-new mapping. Shared contact details
 // (one person managing several CRM clients, placeholder numbers, etc.) must
-// never block billing, so ambiguity resolves to "create a separate customer"
-// instead of an HTTP 409.
+// never block billing, so a conflict never raises an HTTP 409. A new customer is
+// created only when no existing one is compatible by name and identifiers.
 const findCustomerIdentityMatches = async ({ businessId, input, session }) => {
   if (input.gstNumber) {
     const rows = await Customer.find({ businessId, gstNumber: input.gstNumber }).sort({ createdAt: 1 }).limit(5).session(session);
@@ -90,10 +90,21 @@ const findCustomerIdentityMatches = async ({ businessId, input, session }) => {
     input.email && { email: input.email },
   ].filter(Boolean);
   for (const hint of hints) {
-    const rows = await Customer.find({ businessId, ...hint }).limit(5).session(session);
+    const rows = await Customer.find({ businessId, ...hint }).sort({ createdAt: 1 }).limit(5).session(session);
     const byName = rows.filter((row) => sameName(row.name, input.name));
-    if (byName.length === 1) return byName[0];
+    if (byName.length) return byName[0];
   }
+  // Same name and nothing that contradicts it (no different phone, email or
+  // GSTIN on either side): it is the same customer, so reuse it instead of
+  // listing the person twice in the invoice customer picker.
+  const sameNamed = await Customer.find({ businessId }).sort({ createdAt: 1 }).limit(2000).select("name phone email gstNumber").session(session);
+  const last10 = (value) => String(value || "").replace(/\D/g, "").slice(-10);
+  const differs = (a, b) => Boolean(a) && Boolean(b) && a !== b;
+  const compatible = sameNamed.find((row) => sameName(row.name, input.name)
+    && !differs(last10(row.phone), last10(input.phone))
+    && !differs(String(row.email || "").toLowerCase(), input.email)
+    && !differs(String(row.gstNumber || "").toUpperCase(), input.gstNumber));
+  if (compatible) return compatible;
   return null;
 };
 
@@ -239,6 +250,8 @@ const resolveInvoiceHandoff = async ({ token, businessId, userId }) => {
   if (handoff.billingContext?.sourceRef?.sourceId) {
     const sr = handoff.billingContext.sourceRef;
     const inv = await Invoice.findOne({
+      businessId,
+      status: { $ne: "cancelled" },
       "crmSourceRef.source": sr.source,
       "crmSourceRef.sourceType": sr.sourceType,
       "crmSourceRef.sourceId": sr.sourceId,
@@ -540,6 +553,7 @@ module.exports = {
   authenticateIntegrationKey,
   createInvoiceHandoff,
   createCredential,
+  findCustomerIdentityMatches,
   hashValue,
   ingestExternalOrder,
   listCredentials,
