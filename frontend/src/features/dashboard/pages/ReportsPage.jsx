@@ -1,3 +1,4 @@
+import PageHeader from "../../../components/ui/PageHeader";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { RefreshCw } from "lucide-react";
@@ -55,14 +56,14 @@ const ReportsPage = () => {
     return <ReportTable key={key} {...config} rows={rows} preview={preview} pagination={data.pagination?.[key]} loading={loading} onPage={(page, size) => changePage(key, page, size)} onViewAll={() => openDetail(key)} footer={footer} />;
   };
   return <div className="mx-auto max-w-[1500px] space-y-4 pb-6">
-    <header><h2 className="text-2xl font-semibold tracking-tight">Reports / GST</h2><p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>Sales, collections, outstanding balances and expenses.</p></header>
+    <PageHeader kicker="Finance" title="Reports / GST" description="Sales, collections, outstanding balances and expenses." />
     <section aria-label="GST summary" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">{[["Taxable sales", "taxableValue"], ["CGST", "cgst"], ["SGST", "sgst"], ["IGST", "igst"], ["Total GST", "totalGst"]].map(([label, key]) => <Metric key={key} label={label} value={gstData ? money(gstData.sales?.[key]) : "—"} />)}</section>
-    <section className="rounded-2xl border p-3" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}>
+    <section className="panel p-4">
       <div className="flex flex-wrap items-end gap-3"><label className="min-w-0 flex-1 text-xs font-medium">GST from<input type="date" value={dateRange.from} onChange={event => setDateRange(current => ({ ...current, from: event.target.value }))} className="field mt-1 py-2" /></label><label className="min-w-0 flex-1 text-xs font-medium">GST to<input type="date" value={dateRange.to} onChange={event => setDateRange(current => ({ ...current, to: event.target.value }))} className="field mt-1 py-2" /></label><button type="button" disabled={loading || gstLoading} onClick={() => setRefresh(value => value + 1)} className="inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-sm disabled:opacity-50" style={{ borderColor: "var(--panel-border)" }}><RefreshCw size={15} className={loading || gstLoading ? "animate-spin" : ""} />Refresh</button></div>
       <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>Date range applies to GST only. Sales and collection reports cover all dates.</p>
       {invalidRange ? <p role="alert" className="mt-2 text-sm text-rose-600">From date must be on or before To date.</p> : gstError ? <p role="alert" className="mt-2 text-sm text-rose-600">{gstError}</p> : null}
       {gstLoading ? <p role="status" className="mt-2 text-xs">Updating GST report…</p> : null}
-      <nav aria-label="Report sections" className="mt-3 flex flex-wrap gap-1 border-t pt-3" style={{ borderColor: "var(--panel-border)" }}>{tabs.map(item => <button type="button" key={item.key} aria-pressed={activeTab === item.key} onClick={() => { if (item.key === "overview") setQuery({}); setTab(item.key); }} className={`min-h-10 rounded-lg px-3 py-2 text-sm font-medium ${activeTab === item.key ? "bg-brand-600 text-white" : "hover:bg-slate-500/10"}`}>{item.title}</button>)}</nav>
+      <nav aria-label="Report sections" className="segmented no-scrollbar mt-3">{tabs.map(item => <button type="button" key={item.key} aria-pressed={activeTab === item.key} onClick={() => { if (item.key === "overview") setQuery({}); setTab(item.key); }} className={`segmented-item ${activeTab === item.key ? "is-active" : ""}`}>{item.title}</button>)}</nav>
     </section>
     {error ? <p role="alert" className="text-sm text-rose-600">{error} Use Refresh to retry.</p> : null}
     {loading ? <p role="status" className="text-sm" style={{ color: "var(--text-muted)" }}>Updating reports…</p> : null}
@@ -75,7 +76,7 @@ const ReportsPage = () => {
   </div>;
 };
 const Card = ({ title, children }) => <section className="min-w-0 rounded-2xl border p-4" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}><h3 className="text-base font-semibold">{title}</h3><div className="mt-3">{children}</div></section>;
-const Metric = ({ label, value }) => <div className="min-w-0 rounded-xl border p-3" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}><p className="text-xs" style={{ color: "var(--text-muted)" }}>{label}</p><p className="mt-1 break-words text-lg font-semibold tabular-nums">{value}</p></div>;
+const Metric = ({ label, value }) => <div className="panel stat-card min-w-0"><p className="stat-label">{label}</p><p className="mt-1.5 break-words text-lg font-bold tabular-nums">{value}</p></div>;
 const ReportTable = ({ title, rows, columns, preview = false, pagination, loading, onPage, onViewAll, footer, localPage }) => {
   const meta = pagination || { total: rows.length, page: localPage || 1, limit: 10, totalPages: Math.max(1, Math.ceil(rows.length / 10)) };
   const displayed = reportRows(rows, meta, preview, Boolean(pagination));

@@ -6,7 +6,6 @@ import {
   Boxes,
   Building2,
   CalendarCheck2,
-  ChevronRight,
   ClipboardList,
   FileText,
   Landmark,
@@ -74,16 +73,6 @@ const canShowItem = (item, user) => {
   }
 
   return true;
-};
-
-const activeStyle = {
-  color: "white",
-  background: "var(--accent)",
-  boxShadow: "0 4px 14px color-mix(in srgb, var(--accent) 22%, transparent)",
-};
-
-const inactiveStyle = {
-  color: "var(--text-muted)",
 };
 
 const Sidebar = () => {
@@ -179,9 +168,9 @@ const Sidebar = () => {
       >
         <div className="sidebar-header">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-sm font-bold">B</div>
+            <div className="sidebar-logo" aria-hidden="true">B</div>
             <div className="sidebar-expanded-only min-w-0 flex-1">
-              <p className="text-base font-bold tracking-tight">BillStack</p>
+              <p className="text-[15px] font-bold leading-tight tracking-tight">BillStack</p>
               <p className="truncate text-xs" style={{ color: "var(--text-muted)" }}>{business?.name || "Workspace"}</p>
             </div>
           </div>
@@ -202,7 +191,7 @@ const Sidebar = () => {
           {moduleStatus === "error" ? <p role="status" className="sidebar-expanded-only text-xs" style={{ color: "var(--text-muted)" }}>Workspace modules could not be loaded. Refresh to retry.</p> : null}
           {groupedItems.map((group) => (
             <div key={group.key} className="sidebar-group">
-              <p className="sidebar-expanded-only px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--text-muted)" }}>{group.label}</p>
+              <p className="sidebar-group-label sidebar-expanded-only">{group.label}</p>
               {group.items.map((item) => {
                 const Icon = item.icon;
                 const active = isRouteActive(item, location.pathname);
@@ -214,27 +203,19 @@ const Sidebar = () => {
                   onKeyDown={(event) => { if (event.key === "Escape") setTooltip(null); }}
                   aria-label={label} aria-describedby={tooltip?.label === label ? "sidebar-tooltip" : undefined}
                   aria-current={active ? "page" : undefined}
-                  className="sidebar-link group hover:bg-slate-500/[.08]"
-                  style={active ? { ...activeStyle, boxShadow: "none" } : inactiveStyle}>
-                  <Icon size={19} strokeWidth={1.8} className="shrink-0" />
+                  className={`sidebar-link group ${active ? "is-active" : ""}`}>
+                  <Icon size={18} strokeWidth={active ? 2.1 : 1.8} className="shrink-0" />
                   <span className="sidebar-expanded-only min-w-0 flex-1 truncate">{label}</span>
-                  <ChevronRight size={15} className="sidebar-expanded-only shrink-0 opacity-40" />
                 </NavLink>;
               })}
             </div>
           ))}
         </nav>
-        <div className="sidebar-expanded-only mx-4 mt-3 rounded-xl border p-3.5" style={{ borderColor: "var(--panel-border)" }}>
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            <p className="text-[10px] font-semibold uppercase tracking-[0.16em]" style={{ color: "var(--accent)" }}>
-              {business?.billingEntityCode === "GOLDHAWK" ? "Goldhawk Billing" : "TOOR Billing"}
-            </p>
-          </div>
-          <p className="mt-1 text-sm font-semibold truncate">{business?.name || "The Office On Rent"}</p>
-          <div className="mt-2 flex items-center justify-between border-t pt-1.5" style={{ borderColor: "var(--panel-border)" }}>
-            <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>Active System</span>
-            <span className="text-[10px] font-semibold tracking-wide" style={{ color: "var(--accent)" }}>Powered by NEMNIDHI</span>
+        <div className="sidebar-footer sidebar-expanded-only">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-semibold">{business?.billingEntityCode === "GOLDHAWK" ? "Goldhawk Billing" : "TOOR Billing"}</p>
+            <p className="truncate text-[11px]" style={{ color: "var(--text-muted)" }}>Powered by NEMNIDHI</p>
           </div>
         </div>
       </aside>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Building2 } from "lucide-react";
 import api from "../../api/axios";
 import { authStore } from "../../store/authStore";
 
@@ -9,7 +10,7 @@ export default function BillingEntitySwitcher() {
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     let active = true;
-    const load = () => api.get("/business/billing-entities").then(r => { if (active) setEntities(r.data.data); }).catch(() => {});
+    const load = () => api.get("/business/billing-entities").then(r => { if (active) setEntities(Array.isArray(r.data?.data) ? r.data.data : []); }).catch(() => {});
     load();
     window.addEventListener("billstack-entities-changed", load);
     return () => { active = false; window.removeEventListener("billstack-entities-changed", load); };
@@ -26,5 +27,14 @@ export default function BillingEntitySwitcher() {
       window.location.assign("/dashboard");
     } catch (err) { setError(err.response?.data?.message || "Unable to switch billing company"); setBusy(false); }
   };
-  return <div className="max-w-64"><label className="text-xs">Active billing company<select aria-label="Active billing company" value={business?.id || ""} onChange={change} disabled={busy} className="block w-full rounded border bg-transparent p-1 text-sm">{entities.length ? entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>) : <option value={business?.id || ""}>{business?.name}</option>}</select></label>{error && <p role="alert" className="text-xs text-red-600">{error}</p>}</div>;
+  // A single billing company needs no switcher; show nothing rather than a disabled control.
+  if (!Array.isArray(entities) || entities.length < 2) return error ? <p role="alert" className="text-xs text-rose-600">{error}</p> : null;
+  return <div className="relative min-w-0">
+    <label className="sr-only" htmlFor="billing-entity-switcher">Active billing company</label>
+    <Building2 size={15} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
+    <select id="billing-entity-switcher" title="Active billing company" value={business?.id || ""} onChange={change} disabled={busy} className="entity-switcher">
+      {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+    </select>
+    {error && <p role="alert" className="absolute right-0 top-full mt-1 whitespace-nowrap text-xs text-rose-600">{error}</p>}
+  </div>;
 }

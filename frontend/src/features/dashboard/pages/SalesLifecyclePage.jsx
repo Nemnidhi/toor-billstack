@@ -7,6 +7,7 @@ import { authStore } from "../../../store/authStore";
 import { useCreateAction } from "../../workspace/useCreateAction";
 import { estimatedQuoteTotal } from "../formPresentation";
 import GstLocationPreview from "../GstLocationPreview";
+import PageHeader from "../../../components/ui/PageHeader";
 import { isActiveModule, isRealEstateSelfHostedWorkspace, shouldShowWorkspaceNavigation } from "../../workspace/workspaceVisibility";
 import {
   convertQuoteRequest,
@@ -88,7 +89,8 @@ const SalesLifecyclePage = () => {
       const visibleKeys = new Set(salesTabs.filter((item) => isActiveModule(modules, item.moduleKey) && shouldShowWorkspaceNavigation(item.moduleKey, modules, business)).map((item) => item.key));
       const [customerData, productData, invoiceData, quoteData, creditData, returnData] = await Promise.all([
         listCustomersRequest({ page: 1, limit: 250 }),
-        listProductsRequest({ page: 1, limit: 250 }),
+        // Some workspaces hide the product catalog; quotations still work with typed items.
+        listProductsRequest({ page: 1, limit: 250 }).catch(() => ({ items: [] })),
         listInvoicesRequest({ page: 1, limit: 250, sortBy: "invoiceDate", sortOrder: "desc" }),
         listQuotesRequest(),
         visibleKeys.has("creditNotes") ? listCreditNotesRequest() : Promise.resolve([]),
@@ -266,13 +268,15 @@ const SalesLifecyclePage = () => {
   if (loading) return <LoadingState title="Loading sales lifecycle" description="Fetching quotes, credit notes, returns, invoices, and products." />;
   if (!visibleTabs.length) return <EmptyState title="Sales actions are unavailable" description="These actions are not enabled in your workspace." />;
 
-  return <div className="mx-auto max-w-[1500px] space-y-4 pb-6">
-    <section className="flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}>
-      <div><h2 className="text-2xl font-semibold tracking-tight">{visibleTabs.find((item) => item.key === tab)?.label}</h2><p className="mt-1 max-w-3xl text-sm" style={{ color: "var(--text-muted)" }}>Create, review, send and convert client quotations into invoices.</p></div>
-      <button type="button" onClick={load} disabled={loading || Boolean(saving)} className="inline-flex items-center justify-center gap-2 self-start rounded-xl border px-4 py-2.5 text-sm font-medium disabled:opacity-60 sm:self-auto" style={{ borderColor: "var(--panel-border)" }}><RefreshCw size={16} /> Refresh</button>
-    </section>
-    {error ? <div className="flex items-start justify-between gap-3 rounded-xl border border-rose-500/25 bg-rose-500/5 p-4 text-sm text-rose-700 dark:text-rose-200"><span className="flex gap-2"><CircleAlert size={18} />{error}</span><button onClick={() => setError("")}><X size={16} /></button></div> : null}
-    {visibleTabs.length > 1 ? <nav aria-label="Sales sections" className="flex flex-wrap rounded-xl border p-1" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}>{visibleTabs.map(({ key, label }) => <button key={key} onClick={() => openTab(key)} className="whitespace-nowrap rounded-lg px-4 py-2.5 text-sm font-medium" style={tab === key ? { background: "var(--accent)", color: "white" } : { color: "var(--text-muted)" }}>{label}</button>)}</nav> : null}
+  return <div className="mx-auto max-w-[1500px] space-y-5 pb-6">
+    <PageHeader
+      kicker="Sales"
+      title={visibleTabs.find((item) => item.key === tab)?.label}
+      description={{ quotes: `Create, review, send and convert ${clientWorkspace ? "client" : "customer"} quotations into invoices.`, creditNotes: "Issue credit notes against invoices and track how much has been credited.", returns: "Record returned goods against invoices and keep stock in sync." }[tab]}
+      actions={<button type="button" onClick={load} disabled={loading || Boolean(saving)} className="btn-secondary"><RefreshCw size={16} /> Refresh</button>}
+    />
+    {error ? <div role="alert" className="alert alert-error"><CircleAlert size={18} /><span className="flex-1">{error}</span><button type="button" aria-label="Dismiss" onClick={() => setError("")}><X size={16} /></button></div> : null}
+    {visibleTabs.length > 1 ? <nav aria-label="Sales sections" className="segmented no-scrollbar">{visibleTabs.map(({ key, label }) => <button key={key} type="button" aria-current={tab === key ? "page" : undefined} onClick={() => openTab(key)} className={`segmented-item ${tab === key ? "is-active" : ""}`}>{label}</button>)}</nav> : null}
 
     {tab === "quotes" ? <section className="space-y-5"><QuoteEditor form={quoteForm} setForm={setQuoteForm} editing={editingQuote} setEditing={setEditingQuote} products={products} customers={customers} clientWorkspace={clientWorkspace} saving={saving === "quote"} onSubmit={saveQuote} /><QuoteList rows={quotes} saving={saving} onView={setSelectedQuote} onEdit={editQuote} onTransition={transitionQuote} onConvert={convertQuote} onSend={sendQuote} onDownload={downloadQuote} /></section> : null}
     {tab === "creditNotes" ? <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_440px]"><CreditNoteList rows={creditNotes} /><CreditNoteForm form={creditForm} setForm={setCreditForm} invoice={selectedCreditInvoice} invoices={invoices} usage={creditUsage} saving={saving === "credit"} onSubmit={submitCreditNote} /></section> : null}

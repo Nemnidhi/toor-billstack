@@ -1,3 +1,4 @@
+import PageHeader from "../../../components/ui/PageHeader";
 import { useEffect, useState } from "react";
 import { BellRing, CalendarClock, CheckCircle2, CircleAlert, Mail, MessageCircle, RefreshCw, Send, Settings, Smartphone } from "lucide-react";
 import { communicationDeliveriesRequest, communicationRulesRequest, communicationScheduledRequest, communicationSummaryRequest, communicationTemplatesRequest, createCommunicationRuleRequest, upsertCommunicationTemplateRequest } from "../../auth/api";
@@ -188,14 +189,16 @@ const CommunicationsPage = () => {
   ];
 
   return <div className="mx-auto max-w-[1500px] space-y-6 pb-8">
-    <section className="flex flex-col gap-4 rounded-2xl border p-5 sm:p-7 lg:flex-row lg:items-end lg:justify-between" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}>
-      <div><p className="text-sm font-medium text-brand-600">Communications</p><h2 className="mt-2 text-3xl font-semibold tracking-tight">WhatsApp, email and payment reminders</h2><p className="mt-2 max-w-3xl text-sm" style={{ color: "var(--text-muted)" }}>Durable reminder automation for invoices. WhatsApp is provider-ready and stays disabled until BillStack's WhatsApp Business API is configured.</p></div>
-      <button onClick={load} className="inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold" style={{ borderColor: "var(--panel-border)" }}><RefreshCw size={16} /> Refresh</button>
-    </section>
-    {error ? <div className="rounded-xl border border-rose-500/25 bg-rose-500/5 p-4 text-sm text-rose-700 dark:text-rose-200">{error}</div> : null}
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(([label, value, Icon]) => <div key={label} className="rounded-xl border p-4" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}><div className="flex items-center justify-between"><p className="text-xs font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{label}</p><Icon size={18} className="text-brand-600" /></div><p className="mt-3 text-2xl font-semibold">{value}</p></div>)}</section>
-    <div className="flex gap-2 overflow-x-auto">{communicationTabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={`whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium ${tab === item.id ? "bg-brand-600 text-white" : "border"}`} style={tab === item.id ? {} : { borderColor: "var(--panel-border)", color: "var(--text-muted)" }}>{item.label}</button>)}</div>
-    {tab === "overview" ? <section className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]"><ReminderTable title="Upcoming reminders" rows={summary?.upcoming || []} /><ProviderSettings status={summary?.providerStatus} /></section> : null}
+    <PageHeader
+      kicker="Communications"
+      title="WhatsApp, email and payment reminders"
+      description="Automated invoice reminders. WhatsApp stays disabled until the WhatsApp Business API is configured."
+      actions={<button type="button" onClick={load} className="btn-secondary"><RefreshCw size={16} /> Refresh</button>}
+    />
+    {error ? <div role="alert" className="alert alert-error"><CircleAlert size={18} /><span>{error}</span></div> : null}
+    <section className="stat-grid">{metrics.map(([label, value, Icon]) => <div key={label} className="panel stat-card"><div className="flex items-center justify-between"><p className="stat-label">{label}</p><Icon size={15} style={{ color: "var(--text-muted)" }} /></div><p className="stat-value">{value}</p></div>)}</section>
+    <nav aria-label="Communication sections" className="segmented no-scrollbar">{communicationTabs.map((item) => <button key={item.id} type="button" aria-current={tab === item.id ? "page" : undefined} onClick={() => setTab(item.id)} className={`segmented-item ${tab === item.id ? "is-active" : ""}`}>{item.label}</button>)}</nav>
+    {tab === "overview" ? <section className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(300px,0.8fr)]"><ReminderTable title="Upcoming reminders" rows={summary?.upcoming || []} /><ProviderSettings status={summary?.providerStatus} /></section> : null}
     {tab === "automation" ? <AutomationPanel scheduled={scheduled} rules={rules} form={ruleForm} setForm={setRuleForm} templates={templates} providerStatus={summary?.providerStatus} onSubmit={createRule} /> : null}
     {tab === "templates" ? <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]"><TemplateGrid templates={templates} onEdit={(template) => setTemplateForm(templateToForm(template))} onDuplicate={(template) => setTemplateForm({ ...templateToForm(template), code: "", name: `${template.name} Copy`, isDefault: false })} onQuickSave={async (template, patch) => { await upsertCommunicationTemplateRequest({ ...templateToForm(template), ...patch }); await load(); }} /><TemplateForm form={templateForm} setForm={setTemplateForm} providerStatus={summary?.providerStatus} onSubmit={saveTemplate} onCancel={() => setTemplateForm(defaultTemplateForm())} /></section> : null}
     {tab === "delivery" ? <DeliveryTable rows={deliveries} /> : null}
