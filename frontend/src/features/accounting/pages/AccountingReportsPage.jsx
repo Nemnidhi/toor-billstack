@@ -192,7 +192,7 @@ const AccountingReportsPage = () => {
   return (
     <div className="mx-auto max-w-[1550px] space-y-6 pb-12">
       {/* Page Title & Top Toolbar */}
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
         <div>
           <div className="flex items-center gap-2">
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-500/10 text-brand-600">
@@ -208,14 +208,14 @@ const AccountingReportsPage = () => {
         </div>
 
         {/* Global Filters */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="toolbar">
           {/* Entity Filter */}
-          <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <Building2 className="h-4 w-4 text-slate-400" />
+          <div className="toolbar-field">
+            <Building2 className="h-4 w-4" />
             <select
               value={selectedEntity}
               onChange={(e) => setSelectedEntity(e.target.value)}
-              className="bg-transparent text-xs font-semibold text-slate-800 outline-none dark:text-slate-200"
+              aria-label="Company"
             >
               <option value="all">All Companies (Consolidated)</option>
               <option value="TOOR">The Office On Rent (GST)</option>
@@ -224,12 +224,12 @@ const AccountingReportsPage = () => {
           </div>
 
           {/* Period Filter (Indian FY) */}
-          <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <Calendar className="h-4 w-4 text-slate-400" />
+          <div className="toolbar-field">
+            <Calendar className="h-4 w-4" />
             <select
               value={selectedPeriod}
               onChange={(e) => setSelectedPeriod(e.target.value)}
-              className="bg-transparent text-xs font-semibold text-slate-800 outline-none dark:text-slate-200 cursor-pointer"
+              aria-label="Period"
             >
               <optgroup label="Yearly">
                 <option value="FY">Indian FY 2026-27 (Full Year)</option>
@@ -273,14 +273,14 @@ const AccountingReportsPage = () => {
                 type="date"
                 value={dateRange.from}
                 onChange={(e) => setDateRange((prev) => ({ ...prev, from: e.target.value }))}
-                className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium dark:border-slate-800 dark:bg-slate-900"
+                className="toolbar-field"
               />
               <span className="text-xs text-slate-400">to</span>
               <input
                 type="date"
                 value={dateRange.to}
                 onChange={(e) => setDateRange((prev) => ({ ...prev, to: e.target.value }))}
-                className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium dark:border-slate-800 dark:bg-slate-900"
+                className="toolbar-field"
               />
             </div>
           )}
@@ -289,7 +289,7 @@ const AccountingReportsPage = () => {
           <button
             onClick={loadAll}
             disabled={loading}
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
+            className="toolbar-btn icon" aria-label="Refresh reports"
             title="Refresh reports"
           >
             <RefreshCw className={"h-4 w-4 " + (loading ? "animate-spin" : "")} />
@@ -299,7 +299,7 @@ const AccountingReportsPage = () => {
           <button
             onClick={handleDownloadXlsx}
             disabled={exportLoading}
-            className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50"
+            className="toolbar-btn primary disabled:opacity-50"
             title="Download CA-Ready Multi-Sheet Excel File"
           >
             <FileSpreadsheet className="h-4 w-4" />
@@ -310,30 +310,27 @@ const AccountingReportsPage = () => {
 
       {/* Historical Data Warning Banner */}
       {warningData?.hasUnpostedLegacyData && (
-        <div className="rounded-2xl border border-amber-300 bg-amber-50/80 p-4 text-amber-900 shadow-sm dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-200">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-            <div className="space-y-1">
-              <div className="font-semibold text-sm">
-                Historical accounting data incomplete / backfill required
+        <div className="notice notice-warn" role="status">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="notice-title">Some older transactions are not in the accounting books yet</div>
+            <p className="notice-body">
+              {warningData.message || "These transactions were recorded before double-entry posting was enabled, so the reports below may not include them until a backfill is run."}
+            </p>
+            {warningData.unpostedCounts && (
+              <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold">
+                <span className="rounded-full bg-amber-500/15 px-2.5 py-1">Invoices: {warningData.unpostedCounts.invoices}</span>
+                <span className="rounded-full bg-amber-500/15 px-2.5 py-1">Payments: {warningData.unpostedCounts.payments}</span>
+                <span className="rounded-full bg-amber-500/15 px-2.5 py-1">Expenses: {warningData.unpostedCounts.expenses}</span>
               </div>
-              <p className="text-xs text-amber-800 dark:text-amber-300">
-                {warningData.message || "Some legacy financial records in this period were recorded before Phase 4 double-entry posting was introduced."}
-              </p>
-              {warningData.unpostedCounts && (
-                <div className="flex flex-wrap gap-4 pt-1 text-xs font-medium">
-                  <span>Unposted Invoices: {warningData.unpostedCounts.invoices}</span>
-                  <span>Unposted Payments: {warningData.unpostedCounts.payments}</span>
-                  <span>Unposted Expenses: {warningData.unpostedCounts.expenses}</span>
-                </div>
-              )}
-            </div>
+            )}
           </div>
+          <button type="button" onClick={() => setActiveTab("backfill")} className="shrink-0 rounded-lg border border-amber-600/40 px-3 py-1.5 text-xs font-bold hover:bg-amber-500/10">Open backfill</button>
         </div>
       )}
 
       {/* Tabs Bar */}
-      <div className="flex overflow-x-auto border-b border-slate-200 dark:border-slate-800">
+      <div className="tabbar" role="tablist">
         {[
           { key: "overview", label: "Overview", icon: BarChart3 },
           { key: "profit_loss", label: "Profit & Loss", icon: TrendingUp },
@@ -369,9 +366,9 @@ const AccountingReportsPage = () => {
       {activeTab === "overview" && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-              <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Total Revenue / Income</span>
-              <div className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
+            <div className="kpi-card">
+              <span className="kpi-label">Total Revenue / Income</span>
+              <div className="kpi-value">
                 {money(plData?.income?.total)}
               </div>
               <div className="mt-1 flex items-center text-xs text-emerald-600">
@@ -379,9 +376,9 @@ const AccountingReportsPage = () => {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-              <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Total Operating Expenses</span>
-              <div className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
+            <div className="kpi-card">
+              <span className="kpi-label">Total Operating Expenses</span>
+              <div className="kpi-value">
                 {money(plData?.expenses?.total)}
               </div>
               <div className="mt-1 flex items-center text-xs text-rose-500">
@@ -389,18 +386,18 @@ const AccountingReportsPage = () => {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-              <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Net Profit / (Loss)</span>
+            <div className="kpi-card">
+              <span className="kpi-label">Net Profit / (Loss)</span>
               <div className={"mt-2 text-2xl font-bold " + ((plData?.netProfitMinor || 0) >= 0 ? "text-emerald-600" : "text-rose-600")}>
                 {money(plData?.netProfit)}
               </div>
-              <div className="mt-1 text-xs text-slate-400">
+              <div className="kpi-note">
                 {(plData?.netProfitMinor || 0) >= 0 ? "Profitable period" : "Net operating loss"}
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-              <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Balance Sheet Status</span>
+            <div className="kpi-card">
+              <span className="kpi-label">Balance Sheet Status</span>
               <div className="mt-2 flex items-center gap-2 text-2xl font-bold text-slate-900 dark:text-white">
                 {!bsData?.totals ? (
                   <span className="flex items-center gap-1.5 text-base text-slate-500 font-semibold">
@@ -408,7 +405,7 @@ const AccountingReportsPage = () => {
                   </span>
                 ) : bsData.totals.isBalanced ? (
                   <span className="flex items-center gap-1.5 text-base text-emerald-600 font-semibold">
-                    <CheckCircle2 className="h-5 w-5" /> Balanced (A = L + E)
+                    <CheckCircle2 className="h-5 w-5" /> Balanced
                   </span>
                 ) : (
                   <span className="flex items-center gap-1.5 text-base text-rose-600 font-semibold">
@@ -416,9 +413,9 @@ const AccountingReportsPage = () => {
                   </span>
                 )}
               </div>
-              <div className="mt-1 text-xs text-slate-400">
+              <div className="kpi-note">
                 {bsData?.totals
-                  ? <>Assets: {money(bsData.totals.totalAssets)} | Liab+Eq: {money(bsData.totals.totalLiabilitiesAndEquity)}</>
+                  ? <>Assets {money(bsData.totals.totalAssets)} · Liabilities + Equity {money(bsData.totals.totalLiabilitiesAndEquity)}</>
                   : "The balance sheet could not be loaded. Use refresh, or check the selected company."}
               </div>
             </div>
