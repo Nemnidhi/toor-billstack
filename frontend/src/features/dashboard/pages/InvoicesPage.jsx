@@ -68,6 +68,7 @@ const InvoicesPage = () => {
   const [postIssue, setPostIssue] = useState(null);
   const [crmHandoff, setCrmHandoff] = useState(null);
   const [crmExisting, setCrmExisting] = useState(null);
+  const [crmNameAck, setCrmNameAck] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentForm, setPaymentForm] = useState(makePaymentForm);
   const [paymentTarget, setPaymentTarget] = useState(null);
@@ -104,7 +105,7 @@ const InvoicesPage = () => {
       setEditingId("");
 
       const initialForm = makeForm();
-      setCrmHandoff(billingCtx ? { items: billingCtx.prefill?.lineItems?.length || 0, reference: billingCtx.prefill?.reference || "", notes: billingCtx.prefill?.notes || "" } : null);
+      setCrmHandoff(billingCtx ? { clientName: billingCtx.clientName || "", items: billingCtx.prefill?.lineItems?.length || 0, reference: billingCtx.prefill?.reference || "", notes: billingCtx.prefill?.notes || "" } : null);
       if (handoffCustomerId) initialForm.customerId = handoffCustomerId;
 
       if (billingCtx) {
@@ -170,6 +171,11 @@ const InvoicesPage = () => {
   }, [openMenu]);
 
   const selectedCustomer = customers.find((customer) => customer._id === form.customerId);
+  const nameKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const crmNameMismatch = Boolean(crmHandoff?.clientName && selectedCustomer && form.crmSourceRef && (() => {
+    const [a, b] = [nameKey(crmHandoff.clientName), nameKey(selectedCustomer.name)];
+    return a && b && a !== b && !(Math.min(a.length, b.length) >= 4 && (a.includes(b) || b.includes(a)));
+  })() && !crmNameAck);
   useEffect(() => {
     if (!selectedCustomer || form.placeOfSupplyCode) return;
     setForm((current) => ({ ...current, placeOfSupplyCode: selectedCustomer.placeOfSupplyCode || selectedCustomer.stateCode || "" }));
@@ -181,7 +187,7 @@ const InvoicesPage = () => {
     let cancelled = false;
     setGstPreview(null); setGstPreviewError(""); setGstPreviewSkipped(false);
     if (!showEditor || !isInvoicePreviewReady(form)) return;
-    const timer = setTimeout(() => previewInvoiceTaxRequest({ ...form, lineItems: form.lineItems.map(item => ({ ...item, productId: item.productId || undefined })) }).then(data => { if (!cancelled) { setGstPreview(data?.gstSnapshot || null); setGstPreviewError(""); } }).catch(error => { if (cancelled) return; if (error.response?.status === 404) { setGstPreviewSkipped(true); return; } setGstPreviewError(error.response?.data?.message || "GST preview unavailable"); }), 350);
+    const timer = setTimeout(() => previewInvoiceTaxRequest({ ...form, lineItems: form.lineItems.map(item => ({ ...item, productId: item.productId || undefined })) }).then(data => { if (!cancelled) { setGstPreview(data?.gstSnapshot || null); setGstPreviewError(""); if (!data?.gstSnapshot) setGstPreviewSkipped(true); } }).catch(error => { if (cancelled) return; if (error.response?.status === 404) { setGstPreviewSkipped(true); return; } setGstPreviewError(error.response?.data?.message || "GST preview unavailable"); }), 350);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [form, showEditor]);
   const totals = useMemo(() => {
@@ -261,7 +267,7 @@ const InvoicesPage = () => {
       return next;
     }),
   }));
-  const resetEditor = () => { pendingIssue.current = null; issuePaymentKey.current = makePaymentForm().idempotencyKey; setEditingId(""); setForm(makeForm()); setErrors({}); setCrmHandoff(null); setCrmExisting(null); setShowEditor(false); };
+  const resetEditor = () => { pendingIssue.current = null; issuePaymentKey.current = makePaymentForm().idempotencyKey; setEditingId(""); setForm(makeForm()); setErrors({}); setCrmHandoff(null); setCrmExisting(null); setCrmNameAck(false); setShowEditor(false); };
   const edit = (invoice) => {
     setMessage("");
     setGstPreviewError("");
@@ -510,7 +516,7 @@ const InvoicesPage = () => {
     : !editingId && form.paymentMode === "partial"
       ? Math.min(Math.max(Number(form.upfrontPaymentAmount || 0), 0), totals.grand)
       : 0;
-const holdForExisting = Boolean(crmExisting && form.crmSourceRef && !editingId);
+const holdForExisting = Boolean((crmExisting && form.crmSourceRef && !editingId) || (crmNameMismatch && !editingId));
   const balanceAfterUpfrontPayment = Math.max(totals.grand - upfrontPaidPreview, 0);
 
   return <div className="mx-auto max-w-[1500px] space-y-6 pb-8">
@@ -520,7 +526,7 @@ const holdForExisting = Boolean(crmExisting && form.crmSourceRef && !editingId);
 
     {postIssue ? <section className="rounded-2xl border p-5" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><p className="flex items-center gap-2 text-sm font-semibold text-emerald-600"><CheckCircle2 size={17} /> Invoice {postIssue.invoice.invoiceNumber} is issued</p>{postIssue.sendError ? <p className="mt-1 text-sm text-amber-600">{postIssue.sendError}</p> : <p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>{Number(postIssue.invoice.balanceDue || 0) > 0 ? "You can now record a partial or full payment for this invoice." : "Payment completed for this invoice."}</p>}</div><div className="flex flex-wrap gap-2">{postIssue.sendError ? <button type="button" onClick={async () => { try { await sendInvoiceCommunicationRequest(postIssue.invoice._id, { channel: "EMAIL", category: "INVOICE_CREATED" }); setPostIssue((current) => ({ ...current, sendError: "" })); uiStore.getState().pushToast({ tone: "success", message: "Invoice sent successfully." }); } catch (error) { setPostIssue((current) => ({ ...current, sendError: error.response?.data?.message || "Unable to send invoice." })); } }} className="rounded-xl border px-4 py-2.5 text-sm font-medium" style={{ borderColor: "var(--panel-border)" }}>Retry send</button> : null}{Number(postIssue.invoice.balanceDue || 0) > 0 ? <button type="button" onClick={() => openPaymentModal(postIssue.invoice)} className="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white">Record Payment</button> : null}</div></div></section> : null}
 
-    {showEditor ? <form id="invoice-editor" onSubmit={(event) => save(event)} className="rounded-2xl border p-4 sm:p-5" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}><div className="flex flex-wrap items-start justify-between gap-4 border-b pb-5" style={{ borderColor: "var(--panel-border)" }}><div><p className="text-sm font-medium text-brand-600 dark:text-brand-300">{editingId ? "Editing invoice" : "New invoice"}</p><h3 className="mt-1 text-xl font-semibold">{editingId ? "Update invoice details" : "Create an invoice"}</h3><p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>Select the customer and enter the item or service, quantity, and rate below. Review the total before issuing.</p></div><button type="button" onClick={resetEditor} className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm" style={{ borderColor: "var(--panel-border)" }}><X size={16} /> Close</button></div>{crmExisting && form.crmSourceRef ? <div role="status" className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm"><p className="font-semibold text-amber-700 dark:text-amber-300">Invoice {crmExisting.invoiceNumber} was already issued for this client and period</p><p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>Total {money(crmExisting.grandTotal)}. Issuing again would bill the same rent twice, so the new invoice is on hold. Open the existing one, or create a separate invoice only if this is an extra charge.</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => navigate(`/dashboard/invoices/${crmExisting._id}`)} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-700">View invoice {crmExisting.invoiceNumber}</button><button type="button" onClick={() => { setForm((current) => ({ ...current, crmSourceRef: null })); setCrmExisting(null); }} className="rounded-lg border px-3 py-2 text-xs font-medium" style={{ borderColor: "var(--panel-border)" }}>Create a separate invoice</button></div></div> : null}{crmHandoff ? <div className="mt-4 flex items-start gap-3 rounded-xl border border-brand-500/25 bg-brand-500/5 p-3.5 text-sm"><span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-500/15 text-brand-700 dark:text-brand-200"><FilePlus2 size={16} /></span><div className="min-w-0"><p className="font-semibold">Prefilled from CRM · {crmHandoff.items} item{crmHandoff.items === 1 ? "" : "s"}</p><p className="mt-0.5 break-words text-xs" style={{ color: "var(--text-muted)" }}>{crmHandoff.notes || "Review the items, rates and dates below, then issue the invoice."}</p></div></div> : null}
+    {showEditor ? <form id="invoice-editor" onSubmit={(event) => save(event)} className="rounded-2xl border p-4 sm:p-5" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}><div className="flex flex-wrap items-start justify-between gap-4 border-b pb-5" style={{ borderColor: "var(--panel-border)" }}><div><p className="text-sm font-medium text-brand-600 dark:text-brand-300">{editingId ? "Editing invoice" : "New invoice"}</p><h3 className="mt-1 text-xl font-semibold">{editingId ? "Update invoice details" : "Create an invoice"}</h3><p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>Select the customer and enter the item or service, quantity, and rate below. Review the total before issuing.</p></div><button type="button" onClick={resetEditor} className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm" style={{ borderColor: "var(--panel-border)" }}><X size={16} /> Close</button></div>{crmNameMismatch ? <div role="alert" className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm"><p className="font-semibold text-rose-700 dark:text-rose-300">Customer does not match the CRM client</p><p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>The CRM client is <strong>{crmHandoff.clientName}</strong>, but the selected customer is <strong>{selectedCustomer.name}</strong>. Pick the correct customer below, or confirm this is intended before issuing.</p><button type="button" onClick={() => setCrmNameAck(true)} className="mt-3 rounded-lg border px-3 py-2 text-xs font-medium" style={{ borderColor: "var(--panel-border)" }}>This is intended, continue</button></div> : null}{crmExisting && form.crmSourceRef ? <div role="status" className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm"><p className="font-semibold text-amber-700 dark:text-amber-300">Invoice {crmExisting.invoiceNumber} was already issued for this client and period</p><p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>Total {money(crmExisting.grandTotal)}. Issuing again would bill the same rent twice, so the new invoice is on hold. Open the existing one, or create a separate invoice only if this is an extra charge.</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => navigate(`/dashboard/invoices/${crmExisting._id}`)} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-700">View invoice {crmExisting.invoiceNumber}</button><button type="button" onClick={() => { setForm((current) => ({ ...current, crmSourceRef: null })); setCrmExisting(null); }} className="rounded-lg border px-3 py-2 text-xs font-medium" style={{ borderColor: "var(--panel-border)" }}>Create a separate invoice</button></div></div> : null}{crmHandoff ? <div className="mt-4 flex items-start gap-3 rounded-xl border border-brand-500/25 bg-brand-500/5 p-3.5 text-sm"><span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-500/15 text-brand-700 dark:text-brand-200"><FilePlus2 size={16} /></span><div className="min-w-0"><p className="font-semibold">Prefilled from CRM · {crmHandoff.items} item{crmHandoff.items === 1 ? "" : "s"}</p><p className="mt-0.5 break-words text-xs" style={{ color: "var(--text-muted)" }}>{crmHandoff.notes || "Review the items, rates and dates below, then issue the invoice."}</p></div></div> : null}
       {business?.billingEntityCode === "GOLDHAWK" ? (
   <div className="mt-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/50 p-3 text-xs text-slate-600 dark:text-slate-300 font-medium">
     Billing Entity: <strong>Goldhawk Infrabulls Pvt. Ltd.</strong> · Non-GST / Exempt Services

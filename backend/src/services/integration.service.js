@@ -207,6 +207,7 @@ const normalizeBillingContext = (ctx) => {
   return {
     billingType,
     billingEntityCode,
+    clientName: String(ctx.clientName || "").trim().slice(0, 160),
     sourceRef,
     prefill: {
       notes: String(ctx.prefill?.notes || "").slice(0, 500),
