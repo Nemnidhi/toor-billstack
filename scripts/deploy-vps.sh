@@ -27,6 +27,8 @@ APP_DIR="${APP_DIR:-$DEFAULT_APP_DIR}"
   || die "No BillStack checkout at $APP_DIR. Re-run with APP_DIR=/path/to/toor-billstack (the folder nginx serves frontend/dist from)."
 APP_OWNER="$(stat -c %U "$APP_DIR")"
 echo "App directory: $APP_DIR (owner: $APP_OWNER)"
+# Earlier deploys run as root can leave root-owned build folders that the owner cannot replace.
+if [ "$(id -u)" = 0 ]; then chown -R "$APP_OWNER":"$APP_OWNER" "$APP_DIR" 2>/dev/null || true; fi
 
 # Run a command as the folder's owner so files never become root-owned.
 run() {
@@ -39,8 +41,30 @@ in_app() { run "cd '$APP_DIR' && $1"; }
 has_unit() { systemctl list-unit-files --no-legend 2>/dev/null | awk '{print $1}' | grep -qx "$1.service"; }
 has_unit "$API_SERVICE" || die "systemd service '$API_SERVICE' not found. Set API_SERVICE=<name> (see: systemctl list-units | grep -i bill)."
 
-PORT="${PORT:-$(grep -E '^PORT=' "$APP_DIR/backend/.env" 2>/dev/null | cut -d= -f2 | tr -d '\r\"' || true)}"
-PORT="${PORT:-5101}"
+ENV_PORT="${PORT:-$(grep -E '^PORT=' "$APP_DIR/backend/.env" 2>/dev/null | cut -d= -f2 | tr -d '\r\"' || true)}"
+
+# The port the API really listens on can differ from backend/.env (systemd may override it),
+# so ask the running service: every listening port of its process tree, then the fallbacks.
+service_ports() {
+  local main frontier next kids f p pids
+  main="$(systemctl show "$API_SERVICE" -p MainPID --value 2>/dev/null || true)"
+  [ -n "$main" ] && [ "$main" != 0 ] || return 0
+  pids="$main"; frontier="$main"
+  while [ -n "$frontier" ]; do
+    next=""
+    for f in $frontier; do kids="$(ps -o pid= --ppid "$f" 2>/dev/null | tr -d ' ' | tr '\n' ' ')"; next="$next $kids"; done
+    frontier="$(echo $next)"; pids="$pids $frontier"
+  done
+  for p in $pids; do ss -ltnpH 2>/dev/null | grep "pid=$p," | awk '{print $4}' | sed 's/.*://'; done
+}
+healthy() {
+  local port
+  for port in $(service_ports) $ENV_PORT 5101; do
+    [ -n "$port" ] || continue
+    if curl -fsS "http://127.0.0.1:${port}${HEALTH_PATH}" >/dev/null 2>&1; then echo "$port"; return 0; fi
+  done
+  return 1
+}
 
 say "Saving a rollback point"
 PREV_SHA="$(in_app 'git rev-parse HEAD')"
@@ -59,7 +83,7 @@ rollback() {
   say "ROLLING BACK to $PREV_SHA"
   in_app "git checkout -q -B deploy-live '$PREV_SHA'" || true
   in_app "cd backend && npm ci --omit=dev >/dev/null 2>&1" || true
-  [ -d "$APP_DIR/frontend/dist.old" ] && in_app "cd frontend && rm -rf dist.bad && mv dist dist.bad && mv dist.old dist" || true
+  [ -d "$APP_DIR/frontend/dist.old" ] && in_app "cd frontend && mv dist \"dist.bad.\$(date +%s)\" && mv dist.old dist" || true
   systemctl restart "$API_SERVICE" || true
   has_unit "$WORKER_SERVICE" && systemctl restart "$WORKER_SERVICE" || true
   die "Deploy failed and the previous version was restored. Check: journalctl -u $API_SERVICE -n 60"
@@ -80,13 +104,14 @@ systemctl restart "$API_SERVICE"
 has_unit "$WORKER_SERVICE" && systemctl restart "$WORKER_SERVICE" || true
 
 say "Health check"
-ok=no
-for _ in 1 2 3 4 5 6 7 8; do
+LIVE_PORT=""
+for _ in $(seq 1 12); do
   sleep 3
-  if curl -fsS "http://127.0.0.1:${PORT}${HEALTH_PATH}" >/dev/null 2>&1; then ok=yes; break; fi
+  if LIVE_PORT="$(healthy)"; then break; fi
+  LIVE_PORT=""
 done
-[ "$ok" = yes ] || { echo "Health check failed on port $PORT."; rollback; }
-echo "Backend healthy on port $PORT"
+[ -n "$LIVE_PORT" ] || { echo "The API did not answer ${HEALTH_PATH} on any of its ports."; rollback; }
+echo "Backend healthy on port $LIVE_PORT"
 
 say "Checking for duplicate billing companies (preview only, nothing is changed)"
 in_app "cd backend && node src/scripts/repair-billing-entities.js" || echo "Preview could not run; check MONGO_URI in backend/.env"
