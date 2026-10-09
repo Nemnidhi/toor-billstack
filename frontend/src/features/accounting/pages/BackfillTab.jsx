@@ -23,7 +23,8 @@ const BackfillTab = ({ selectedEntity, onBackfillComplete }) => {
   };
 
   const handleExecute = async () => {
-    if (!window.confirm("Are you sure you want to execute historical accounting backfill for " + selectedEntity + "? Double-entry journal entries will be posted for all eligible transactions.")) {
+    const entityLabel = selectedEntity === "all" ? "all billing companies" : selectedEntity === "GOLDHAWK" ? "Goldhawk Infrabulls" : selectedEntity === "TOOR" ? "THE OFFICE ON RENT" : "this company";
+    if (!window.confirm("Post accounting entries for older records in " + entityLabel + "? Original invoices, payments and expenses are not changed, and records already posted are skipped.")) {
       return;
     }
 

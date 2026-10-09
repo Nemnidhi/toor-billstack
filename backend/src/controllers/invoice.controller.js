@@ -224,7 +224,8 @@ const buildInvoiceLineItems = ({ items, products }) => {
 
     return {
       productId: product?._id || null,
-      productName: product ? product.name : String(manualName).trim(),
+      // A saved service can carry its own wording on this invoice (e.g. "Cabin rent – Cabin 4, Oct").
+      productName: product ? (String(item.productName || "").trim() || product.name) : String(manualName).trim(),
       hsnSac: product?.hsnSac || item.hsnSac?.trim?.() || "",
       gstClassification: String(product?.gstClassification || item.gstClassification || "TAXABLE").toUpperCase(),
       isManual: !product,
@@ -336,12 +337,10 @@ const createInvoice = asyncHandler(async (req, res) => {
             billingPeriod: String(sr.billingPeriod || "").trim(),
           };
 
+          await releaseCancelledCrmSource(crmSourceRef, req.tenant.businessId, session);
           const existingInvoice = await Invoice.findOne({
-            "crmSourceRef.source": crmSourceRef.source,
-            "crmSourceRef.sourceType": crmSourceRef.sourceType,
-            "crmSourceRef.sourceId": crmSourceRef.sourceId,
-            "crmSourceRef.billingPurpose": crmSourceRef.billingPurpose,
-            "crmSourceRef.billingPeriod": crmSourceRef.billingPeriod,
+            businessId: req.tenant.businessId,
+            ...crmSourceFilter(crmSourceRef),
           }).session(session);
 
           if (existingInvoice) {
@@ -621,6 +620,24 @@ const updateInvoice = asyncHandler(async (req, res) => {
   }
 });
 
+
+// A cancelled invoice must not keep a CRM billable source locked: the unique
+// index would otherwise block issuing the corrected invoice for the same
+// client and month. The reference is moved (not lost) so the audit trail stays.
+const crmSourceFilter = (ref) => ({
+  "crmSourceRef.source": ref.source,
+  "crmSourceRef.sourceType": ref.sourceType,
+  "crmSourceRef.sourceId": ref.sourceId,
+  "crmSourceRef.billingPurpose": ref.billingPurpose,
+  "crmSourceRef.billingPeriod": ref.billingPeriod,
+});
+const releaseCancelledCrmSource = async (ref, businessId, session) =>
+  Invoice.collection?.updateMany(
+    { businessId, status: "cancelled", ...crmSourceFilter(ref) },
+    { $rename: { crmSourceRef: "voidedCrmSourceRef" } },
+    { session }
+  );
+
 const cancelInvoice = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
 
@@ -672,6 +689,9 @@ const cancelInvoice = asyncHandler(async (req, res) => {
       invoice.paymentStatus = "cancelled";
         invoice.balanceDue = 0;
         await invoice.save({ session });
+        if (invoice.crmSourceRef?.sourceId && Invoice.collection) {
+          await Invoice.collection.updateOne({ _id: invoice._id }, { $rename: { crmSourceRef: "voidedCrmSourceRef" } }, { session });
+        }
         await createCustomerLedgerEntryOnce({ businessId: req.tenant.businessId, customerId: invoice.customerId, eventType: "REVERSAL", amount: invoice.grandTotal, direction: "CREDIT", invoiceId: invoice._id, sourceKey: `INVOICE:${invoice._id}:CANCEL`, createdBy: req.user._id, notes: "Invoice cancellation" }, { session });
         await accountingService.postInvoiceCancellationJournalEntry({ invoice, userId: req.user._id, session });
 

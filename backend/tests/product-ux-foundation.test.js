@@ -343,11 +343,12 @@ test("dashboard recent transactions use derived payment state and avoid forced t
   assert.match(styles, /scrollbar-width: thin/);
 });
 
-test("customer workspace uses dropdown selection and latest invoice balance before allocation", () => {
+test("customer workspace uses list selection and latest invoice balance before allocation", () => {
   const customersPage = fs.readFileSync(path.join(__dirname, "../../frontend/src/features/dashboard/pages/CustomersPage.jsx"), "utf8");
 
-  assert.match(customersPage, /<select value=\{selected\?\._id \|\| ""\}/);
-  assert.match(customersPage, /result\.items\.map\(\(customer\) => <option/);
+  assert.match(customersPage, /result\.items\.map\(\(customer\) => \{/);
+  assert.match(customersPage, /aria-current=\{active \? "true" : undefined\}/);
+  assert.match(customersPage, /setSelectedId\(customer\._id\)/);
   assert.match(customersPage, /authoritativeInvoice/);
   assert.match(customersPage, /outstandingPaise/);
   assert.match(customersPage, /latestAllowedPaise/);

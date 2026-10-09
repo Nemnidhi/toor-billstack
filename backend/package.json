@@ -8,11 +8,12 @@
     "start": "node src/server.js",
     "seed": "node src/scripts/seed.js",
     "setup:workspace": "node src/scripts/init-workspace.js",
-    "test": "node tests/run-tests.js && node tests/module-foundation.test.js && node tests/commercial-module.test.js && node tests/plan-commercialization.test.js && node tests/lockout.test.js && node tests/payment-foundation.test.js && node tests/financial-migration.test.js && node tests/sales-lifecycle.test.js && node tests/gst.test.js && node tests/einvoice.test.js && node tests/communication.test.js && node tests/saas-phase15.test.js && node tests/production-hardening.test.js && node tests/final-fix-pass1.test.js && node tests/final-fix-pass3.test.js && node tests/customer-statement-expenses.test.js && node tests/workflow-foundation.test.js && node tests/shared-operations.test.js && node tests/self-hosted-release.test.js && node tests/super-admin-product-configuration.test.js && node tests/final-client-ready.test.js && node tests/auth-login-cleanup.test.js && node tests/ledger-append-only-regression.test.js && node tests/product-ux-foundation.test.js && node tests/dashboard-overdue.test.js && node tests/action-workflows.test.js && node tests/report-scalability.test.js && node tests/gst-policy-regression.test.js",
+    "test": "node tests/run-tests.js && node tests/module-foundation.test.js && node tests/commercial-module.test.js && node tests/plan-commercialization.test.js && node tests/lockout.test.js && node tests/payment-foundation.test.js && node tests/financial-migration.test.js && node tests/sales-lifecycle.test.js && node tests/gst.test.js && node tests/einvoice.test.js && node tests/communication.test.js && node tests/saas-phase15.test.js && node tests/production-hardening.test.js && node tests/final-fix-pass1.test.js && node tests/final-fix-pass3.test.js && node tests/customer-statement-expenses.test.js && node tests/workflow-foundation.test.js && node tests/recurring-manual-service.test.js && node tests/entity-dedupe-and-warning.test.js && node tests/shared-operations.test.js && node tests/self-hosted-release.test.js && node tests/super-admin-product-configuration.test.js && node tests/final-client-ready.test.js && node tests/auth-login-cleanup.test.js && node tests/ledger-append-only-regression.test.js && node tests/product-ux-foundation.test.js && node tests/dashboard-overdue.test.js && node tests/action-workflows.test.js && node tests/report-scalability.test.js && node tests/gst-policy-regression.test.js",
     "financial-migration": "node src/scripts/financial-migration.js",
     "worker": "node src/workers/reminder-worker.js",
     "check:env": "node src/scripts/validate-env.js",
-    "check:transactions": "node src/scripts/check-transactions.js"
+    "check:transactions": "node src/scripts/check-transactions.js",
+    "repair:entities": "node src/scripts/repair-billing-entities.js"
   },
   "keywords": [
     "express",

@@ -1,3 +1,4 @@
+import PageHeader from "../../../components/ui/PageHeader";
 import { useEffect, useMemo, useRef, useState } from "react";
 import BillingEntitySettings from "../../workspace/BillingEntitySettings";
 import gstStates from "../../../../../shared/indian-gst-states.json";
@@ -353,10 +354,10 @@ const BusinessSettingsPage = () => {
 
   return (
     <div className="space-y-6">
+      <PageHeader kicker="Admin" title="Settings" description="Manage your billing companies, GST, invoices and payment details." />
       <BillingEntitySettings />
-      <header><h2 className="text-2xl font-semibold">Billing Company Settings</h2><p className="mt-1 text-sm text-slate-500">Manage your company, GST, invoices and payment details.</p></header>
-      <nav aria-label="Settings sections" className="flex flex-wrap gap-2">
-        {["Business Profile", "GST & Tax", "Invoice & Payment", "Branding", "Communications", ...(visibility.inventory ? ["Inventory"] : [])].map(label => <button key={label} type="button" onClick={() => { setSection(label); setSaveError(""); setFieldErrors({}); setSaved(false); }} aria-pressed={section === label} className={section === label ? "rounded-xl bg-brand-600 px-3 py-2 text-sm font-semibold text-white" : "rounded-xl border px-3 py-2 text-sm"}>{label}</button>)}
+      <nav aria-label="Settings sections" className="segmented no-scrollbar">
+        {["Business Profile", "GST & Tax", "Invoice & Payment", "Branding", "Communications", ...(visibility.inventory ? ["Inventory"] : [])].map(label => <button key={label} type="button" onClick={() => { setSection(label); setSaveError(""); setFieldErrors({}); setSaved(false); }} aria-pressed={section === label} className={`segmented-item ${section === label ? "is-active" : ""}`}>{label}</button>)}
       </nav>
       <section className="mx-auto w-full max-w-5xl space-y-4">
         {section !== "Communications" && <form onSubmit={handleProfileSubmit} className="rounded-2xl border bg-white p-4 sm:p-6 dark:bg-slate-900">
