@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Deploy BillStack on the VPS: update code, rebuild the frontend, restart ONLY the BillStack API.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Nemnidhi/toor-billstack/<branch>/scripts/deploy-vps.sh | BRANCH=<branch> bash
+# Install once on the server (as root), then deploy any pushed branch with one command:
+#   curl -fsSL https://raw.githubusercontent.com/Nemnidhi/toor-billstack/claude/vigilant-bell-nkiiyc/scripts/deploy-vps.sh -o /usr/local/bin/deploy-billstack && chmod +x /usr/local/bin/deploy-billstack
+#   deploy-billstack <branch>          # e.g. deploy-billstack main
+# (BRANCH=<branch> deploy-billstack also works; the branch defaults to main.)
 #
 # Run as root (or as the app owner). Safe by design:
 #   * works on one checkout only (default /home/billstack/apps/toor-billstack) and as that folder's owner
@@ -13,7 +16,7 @@
 #                       WORKER_SERVICE=billstack-preview-worker  PORT=5101  HEALTH_PATH=/api/health
 set -euo pipefail
 
-BRANCH="${BRANCH:-main}"
+BRANCH="${1:-${BRANCH:-main}}"
 DEFAULT_APP_DIR="/home/billstack/apps/toor-billstack"
 API_SERVICE="${API_SERVICE:-billstack-preview-api}"
 WORKER_SERVICE="${WORKER_SERVICE:-billstack-preview-worker}"
