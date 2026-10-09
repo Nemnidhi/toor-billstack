@@ -41,7 +41,9 @@ run() {
 }
 in_app() { run "cd '$APP_DIR' && $1"; }
 
-has_unit() { systemctl list-unit-files --no-legend 2>/dev/null | awk '{print $1}' | grep -qx "$1.service"; }
+# NOTE: do not use "systemctl list-unit-files | grep -q": with pipefail a long list makes grep exit early,
+# the left side gets SIGPIPE and the whole test reports "not found" even when the unit exists.
+has_unit() { systemctl cat "$1.service" >/dev/null 2>&1; }
 has_unit "$API_SERVICE" || die "systemd service '$API_SERVICE' not found. Set API_SERVICE=<name> (see: systemctl list-units | grep -i bill)."
 
 ENV_PORT="${PORT:-$(grep -E '^PORT=' "$APP_DIR/backend/.env" 2>/dev/null | cut -d= -f2 | tr -d '\r\"' || true)}"
