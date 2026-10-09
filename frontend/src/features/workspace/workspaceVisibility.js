@@ -58,7 +58,6 @@ const REAL_ESTATE_CLIENT_HIDDEN_NAV_MODULES = new Set([
   "dispatch_fulfilment",
   "documents_approvals",
   "hr",
-  "team",
 ]);
 
 const REAL_ESTATE_CLIENT_HIDDEN_DASHBOARD_MODULES = new Set([
@@ -76,7 +75,6 @@ const REAL_ESTATE_CLIENT_HIDDEN_DASHBOARD_MODULES = new Set([
   "dispatch_fulfilment",
   "documents_approvals",
   "hr",
-  "team",
 ]);
 
 export const workspaceIndustryCode = (moduleData, business) =>

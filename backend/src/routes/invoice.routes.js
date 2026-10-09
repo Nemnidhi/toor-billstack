@@ -34,6 +34,14 @@ const router = express.Router();
 router.use(authMiddleware, tenantMiddleware, requireActiveSubscription());
 
 router.get("/", listInvoices);
+router.get("/service-suggestions", async (req, res, next) => {
+  try {
+    const { listServiceSuggestions } = require("../services/service-catalog.service");
+    res.json({ message: "Service suggestions fetched", data: await listServiceSuggestions({ businessId: req.tenant.businessId }) });
+  } catch (error) {
+    next(error);
+  }
+});
 router.post("/tax-preview", permit("owner", "admin", "staff", "accountant"), validate(invoiceCreateValidator), previewInvoiceTax);
 router.get("/:invoiceId/allocations", validateObjectIdParam("invoiceId"), listInvoiceAllocations);
 router.get("/:invoiceId/e-invoice", validateObjectIdParam("invoiceId"), getEInvoiceDetails);

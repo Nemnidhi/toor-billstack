@@ -7,19 +7,37 @@ const reconciliationService = require("../services/bank-reconciliation.service")
 /**
  * Controller: Historical Backfill (Dry Run or Execute)
  */
+// Sum two backfill results so "All companies" reports one combined outcome.
+const mergeBackfillResults = (results) => {
+  const add = (target, source) => {
+    Object.entries(source || {}).forEach(([key, value]) => {
+      if (typeof value === "number") target[key] = (target[key] || 0) + value;
+      else if (value && typeof value === "object") add((target[key] = target[key] || {}), value);
+    });
+    return target;
+  };
+  return {
+    ...results[0],
+    business: { id: null, name: results.map((row) => row.business?.name).filter(Boolean).join(" + "), code: "ALL" },
+    summary: results.reduce((acc, row) => add(acc, row.summary), {}),
+    breakdown: results.reduce((acc, row) => add(acc, row.breakdown), {}),
+    unresolvedItems: results.flatMap((row) => (row.unresolvedItems || []).map((item) => ({ ...item, entity: row.business?.name }))),
+    entities: results,
+  };
+};
+
 const runBackfill = asyncHandler(async (req, res) => {
-  const { businessId } = req.accountingScope;
+  const { businessId, isConsolidated, groupEntities = [] } = req.accountingScope;
   const { mode = "DRY_RUN", fromDate, toDate } = req.body;
+  const run = (id) => backfillService.runHistoricalBackfill({ businessId: id, userId: req.user._id, mode, fromDate, toDate });
 
-  const result = await backfillService.runHistoricalBackfill({
-    businessId,
-    userId: req.user._id,
-    mode,
-    fromDate,
-    toDate,
-  });
+  if (isConsolidated) {
+    const results = [];
+    for (const entity of groupEntities) results.push(await run(entity._id));
+    return res.status(200).json({ success: true, data: mergeBackfillResults(results) });
+  }
 
-  res.status(200).json({ success: true, data: result });
+  res.status(200).json({ success: true, data: await run(businessId) });
 });
 
 /**

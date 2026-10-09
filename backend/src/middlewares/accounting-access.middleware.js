@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 const Business = require("../models/Business");
 const AppError = require("../utils/appError");
-const { listEntities, resolveEntityUser } = require("../services/billing-entity.service");
+const { listEntities, resolveEntityUser, canonicalGroupEntities, findGroupEntity } = require("../services/billing-entity.service");
 
 const ALLOWED_ACCOUNTING_ROLES = ["owner", "admin", "accountant"];
 
@@ -22,7 +22,7 @@ const authorizeAccountingReport = async (req, _res, next) => {
       throw new AppError("You do not have permission to access financial reports", 403);
     }
 
-    const requestedEntity = (req.query.entity || req.query.entityId || req.headers["x-billing-entity-id"] || "").trim();
+    const requestedEntity = String(req.query.entity || req.query.entityId || req.body?.entity || req.headers["x-billing-entity-id"] || "").trim();
     const isConsolidatedRequest = requestedEntity.toLowerCase() === "all" || requestedEntity.toLowerCase() === "consolidated";
 
     const userEntities = await listEntities(req.user);
@@ -34,10 +34,7 @@ const authorizeAccountingReport = async (req, _res, next) => {
 
     if (isConsolidatedRequest) {
       // Find the group's entities
-      const groupEntities = await Business.find({
-        $or: [{ _id: rootBusinessId }, { billingParentId: rootBusinessId }],
-        isDisabled: { $ne: true },
-      });
+      const groupEntities = await canonicalGroupEntities(rootBusinessId);
 
       // User must have access to all entities in the group
       const accessibleIds = new Set(userEntities.map((e) => e.id.toString()));
@@ -77,13 +74,7 @@ const authorizeAccountingReport = async (req, _res, next) => {
     let targetBusinessId = req.user.businessId;
 
     if (requestedEntity && requestedEntity.toUpperCase() === "GOLDHAWK") {
-      const gh = await Business.findOne({
-        $or: [
-          { billingParentId: rootBusinessId, billingEntityCode: "GOLDHAWK" },
-          { _id: rootBusinessId, billingEntityCode: "GOLDHAWK" },
-        ],
-        isDisabled: { $ne: true },
-      });
+      const gh = await findGroupEntity(rootBusinessId, "GOLDHAWK");
       if (!gh) throw new AppError("Goldhawk entity not found in your company group", 404);
       targetBusinessId = gh._id;
     } else if (requestedEntity && requestedEntity.toUpperCase() === "TOOR") {

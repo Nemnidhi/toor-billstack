@@ -224,7 +224,8 @@ const buildInvoiceLineItems = ({ items, products }) => {
 
     return {
       productId: product?._id || null,
-      productName: product ? product.name : String(manualName).trim(),
+      // A saved service can carry its own wording on this invoice (e.g. "Cabin rent – Cabin 4, Oct").
+      productName: product ? (String(item.productName || "").trim() || product.name) : String(manualName).trim(),
       hsnSac: product?.hsnSac || item.hsnSac?.trim?.() || "",
       gstClassification: String(product?.gstClassification || item.gstClassification || "TAXABLE").toUpperCase(),
       isManual: !product,

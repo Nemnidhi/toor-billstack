@@ -151,7 +151,7 @@ const normalizeLineItems = async ({ businessId, rawItems, session, allowManualSe
       if (!Number.isFinite(rate) || rate < 0) throw new AppError("Rate must be a valid non-negative amount", 400);
       return {
         productId: product._id,
-        productName: product.name,
+        productName: cleanText(item.productName) || product.name,
         quantity,
         rate,
         taxRate: Number(item.taxRate ?? item.tax ?? product.taxRate ?? 0),

@@ -91,19 +91,21 @@ const getHistoricalWarning = asyncHandler(async (req, res) => {
   const { isConsolidated, businessId, homeBusinessId } = req.accountingScope;
 
   if (isConsolidated) {
-    const Business = require("../models/Business");
-    const gh = await Business.findOne({ billingParentId: homeBusinessId, billingEntityCode: "GOLDHAWK" });
+    const gh = await require("../services/billing-entity.service").findGroupEntity(homeBusinessId, "GOLDHAWK");
     const [toorW, ghW] = await Promise.all([
       reportsService.getHistoricalWarning({ businessId: homeBusinessId, fromDate: req.query.from, toDate: req.query.to }),
       gh ? reportsService.getHistoricalWarning({ businessId: gh._id, fromDate: req.query.from, toDate: req.query.to }) : { hasUnpostedLegacyData: false },
     ]);
 
     const hasUnposted = toorW.hasUnpostedLegacyData || ghW.hasUnpostedLegacyData;
+    const sum = (key) => Number(toorW.unpostedCounts?.[key] || 0) + Number(ghW.unpostedCounts?.[key] || 0);
     return res.status(200).json({
       success: true,
       data: {
         hasUnpostedLegacyData: hasUnposted,
         warning: hasUnposted ? "Historical accounting data incomplete / backfill required in one or more entities" : null,
+        message: toorW.message || ghW.message || null,
+        unpostedCounts: hasUnposted ? { invoices: sum("invoices"), payments: sum("payments"), expenses: sum("expenses"), total: sum("total") } : null,
         entities: { toor: toorW, goldhawk: ghW },
       },
     });

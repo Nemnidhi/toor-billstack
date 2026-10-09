@@ -17,54 +17,48 @@ const { ensureDefaultAccounts, getTrialBalance } = require("./accounting.service
  * Does not perform backfill, only audits and alerts.
  */
 const getHistoricalWarning = async ({ businessId, fromDate, toDate }) => {
-  const invoiceQuery = { businessId, status: { $ne: "draft" } };
-  const paymentQuery = { businessId, status: { $ne: "cancelled" } };
-  const expenseQuery = { businessId, status: { $ne: "CANCELLED" } };
+  // Mirror exactly what the posting/backfill engine journals, and match each record
+  // to its journal entry by sourceKey. Comparing raw counts produced false warnings
+  // (supplier payments, zero-value invoices and reversals never get these entries,
+  // and backfilled entries can carry a different date than the source record).
+  const range = (field) => {
+    const filter = {};
+    if (fromDate) filter.$gte = new Date(fromDate);
+    if (toDate) filter.$lte = new Date(toDate);
+    return Object.keys(filter).length ? { [field]: filter } : {};
+  };
 
-  if (fromDate && toDate) {
-    invoiceQuery.invoiceDate = { $gte: fromDate, $lte: toDate };
-    paymentQuery.paymentDate = { $gte: fromDate, $lte: toDate };
-    expenseQuery.expenseDate = { $gte: fromDate, $lte: toDate };
-  } else if (toDate) {
-    invoiceQuery.invoiceDate = { $lte: toDate };
-    paymentQuery.paymentDate = { $lte: toDate };
-    expenseQuery.expenseDate = { $lte: toDate };
-  }
-
-  const [invoiceCount, paymentCount, expenseCount] = await Promise.all([
-    Invoice.countDocuments(invoiceQuery),
-    Payment.countDocuments(paymentQuery),
-    Expense.countDocuments(expenseQuery),
+  const [invoices, payments, expenses] = await Promise.all([
+    Invoice.find({ businessId, status: { $in: ["issued", "cancelled"] }, grandTotal: { $gt: 0 }, ...range("invoiceDate") }).select("_id").lean(),
+    Payment.find({ businessId, direction: "RECEIVED", amount: { $gt: 0 }, status: { $ne: "REVERSED" }, ...range("paymentDate") }).select("_id").lean(),
+    Expense.find({ businessId, status: { $ne: "CANCELLED" }, totalAmount: { $gt: 0 }, ...range("expenseDate") }).select("_id").lean(),
   ]);
 
-  const jeQuery = { businessId, status: "POSTED" };
-  if (fromDate && toDate) {
-    jeQuery.entryDate = { $gte: fromDate, $lte: toDate };
-  } else if (toDate) {
-    jeQuery.entryDate = { $lte: toDate };
-  }
+  const keyed = [
+    ...invoices.map((row) => ["invoices", `INVOICE:${row._id}:ISSUED`]),
+    ...payments.map((row) => ["payments", `PAYMENT:${row._id}:RECEIVED`]),
+    ...expenses.map((row) => ["expenses", `EXPENSE:${row._id}:RECORDED`]),
+  ];
+  const posted = new Set(
+    (await JournalEntry.find({ businessId, sourceKey: { $in: keyed.map(([, key]) => key) } }).select("sourceKey").lean())
+      .map((row) => row.sourceKey)
+  );
 
-  const [invoiceJeCount, paymentJeCount, expenseJeCount] = await Promise.all([
-    JournalEntry.countDocuments({ ...jeQuery, sourceType: "INVOICE" }),
-    JournalEntry.countDocuments({ ...jeQuery, sourceType: "PAYMENT" }),
-    JournalEntry.countDocuments({ ...jeQuery, sourceType: "EXPENSE" }),
-  ]);
+  const missing = { invoices: 0, payments: 0, expenses: 0 };
+  keyed.forEach(([kind, key]) => { if (!posted.has(key)) missing[kind] += 1; });
 
-  const unpostedInvoices = Math.max(0, invoiceCount - invoiceJeCount);
-  const unpostedPayments = Math.max(0, paymentCount - paymentJeCount);
-  const unpostedExpenses = Math.max(0, expenseCount - expenseJeCount);
-
-  const totalCandidates = invoiceCount + paymentCount + expenseCount;
-  const totalPosted = invoiceJeCount + paymentJeCount + expenseJeCount;
+  const unpostedInvoices = missing.invoices;
+  const unpostedPayments = missing.payments;
+  const unpostedExpenses = missing.expenses;
+  const totalCandidates = keyed.length;
+  const totalPosted = keyed.length - (unpostedInvoices + unpostedPayments + unpostedExpenses);
   const unpostedTotal = unpostedInvoices + unpostedPayments + unpostedExpenses;
 
   let status = "COMPLETE";
   if (totalCandidates > 0 && totalPosted === 0) {
     status = "NOT_BACKFILLED";
-  } else if (unpostedTotal > 0 && totalPosted > 0) {
-    status = "PARTIAL";
   } else if (unpostedTotal > 0) {
-    status = "NOT_BACKFILLED";
+    status = "PARTIAL";
   }
 
   const hasUnpostedLegacyData = unpostedTotal > 0;
@@ -76,7 +70,7 @@ const getHistoricalWarning = async ({ businessId, fromDate, toDate }) => {
       ? "Historical accounting data incomplete / backfill required"
       : null,
     message: hasUnpostedLegacyData
-      ? "Some transactions in this period were recorded before double-entry journal posting was enabled. Historical financial reports may not reflect these transactions until a backfill is performed."
+      ? "Some invoices, payments or expenses were saved before automatic accounting entries were switched on, so the Profit & Loss and Balance Sheet don't include them yet. Run the Historical Backfill once to post them; it is safe to repeat and never changes the original records."
       : null,
     unpostedCounts: {
       invoices: unpostedInvoices,
@@ -510,10 +504,7 @@ const getConsolidatedReport = async ({ reportType, homeBusinessId, query = {} })
   const homeBusiness = await Business.findById(homeBusinessId);
   if (!homeBusiness) throw new AppError("Primary billing company not found", 404);
 
-  const goldhawk = await Business.findOne({
-    billingParentId: homeBusiness._id,
-    billingEntityCode: "GOLDHAWK",
-  });
+  const goldhawk = await require("./billing-entity.service").findGroupEntity(homeBusiness._id, "GOLDHAWK");
 
   if (!goldhawk) {
     throw new AppError("Goldhawk billing entity not found for consolidation", 404);
@@ -719,7 +710,7 @@ const getAccountantExportPack = async ({ businessId, isConsolidated = false, hom
   let businesses = [];
   if (isConsolidated && homeBusinessId) {
     const home = await Business.findById(homeBusinessId);
-    const gh = await Business.findOne({ billingParentId: homeBusinessId, billingEntityCode: "GOLDHAWK" });
+    const gh = await require("./billing-entity.service").findGroupEntity(homeBusinessId, "GOLDHAWK");
     businesses = [home, gh].filter(Boolean);
   } else {
     const b = await Business.findById(businessId);

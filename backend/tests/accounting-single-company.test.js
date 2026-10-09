@@ -11,6 +11,8 @@ const stubs = {
   "../services/billing-entity.service": {
     listEntities: async () => [{ id: "root1" }],
     resolveEntityUser: async () => ({ role: "owner" }),
+    canonicalGroupEntities: async () => [root],
+    findGroupEntity: async () => null,
   },
 };
 const load = Module._load;

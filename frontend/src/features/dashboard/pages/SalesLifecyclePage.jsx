@@ -8,6 +8,7 @@ import { useCreateAction } from "../../workspace/useCreateAction";
 import { estimatedQuoteTotal } from "../formPresentation";
 import GstLocationPreview from "../GstLocationPreview";
 import PageHeader from "../../../components/ui/PageHeader";
+import { findSuggestion, groupSuggestions, suggestionValue, useServiceSuggestions } from "../serviceSuggestions";
 import { isActiveModule, isRealEstateSelfHostedWorkspace, shouldShowWorkspaceNavigation } from "../../workspace/workspaceVisibility";
 import {
   convertQuoteRequest,
@@ -287,7 +288,7 @@ const SalesLifecyclePage = () => {
 
 const normalizeQuotePayload = (form, productMap) => ({
   ...form,
-  lineItems: form.lineItems.map((line) => {
+  lineItems: form.lineItems.map(({ historyKey, ...line }) => {
     const product = line.productId ? productMap.get(String(line.productId)) : null;
     return {
       ...line,
@@ -316,7 +317,7 @@ const QuoteList = ({ rows, saving, onView, onEdit, onTransition, onConvert, onSe
       <tbody>
         {rows.map((row) => (
           <tr key={row._id} className="border-t" style={{ borderColor: "var(--panel-border)" }}>
-            <td className="p-3 font-semibold">{row.quoteNumber}</td>
+            <td className="whitespace-nowrap p-3 font-semibold">{row.quoteNumber}</td>
             <td className="p-3">{row.customerSnapshot?.name || row.customerId?.name || "Customer"}</td>
             <td className="p-3">{date(row.createdAt)}</td>
             <td className="p-3 text-right">{money(row.grandTotal)}</td>
@@ -343,6 +344,13 @@ const QuoteList = ({ rows, saving, onView, onEdit, onTransition, onConvert, onSe
 );
 
 const QuoteEditor = ({ form, setForm, editing, setEditing, products, customers, clientWorkspace, saving, onSubmit }) => {
+  // Saved catalog services plus everything billed before on invoices, quotations and monthly billing.
+  const suggestions = useServiceSuggestions();
+  const options = suggestions.length
+    ? suggestions
+    : products.map((product) => ({ key: String(product._id), productId: product._id, name: product.name, rate: product.sellingPrice, taxRate: product.taxRate, hsnSac: product.hsnSac, source: "catalog" }));
+  const groups = groupSuggestions(options);
+  const lineValue = (line) => (line.productId ? String(line.productId) : line.historyKey ? `history:${line.historyKey}` : "");
   const updateLine = (index, patch) => setForm((value) => ({ ...value, lineItems: value.lineItems.map((line, i) => i === index ? { ...line, ...patch } : line) }));
   const addLine = () => setForm((value) => ({ ...value, lineItems: [...value.lineItems, blankQuoteLine()] }));
   const addCustomLine = () => setForm((value) => ({ ...value, lineItems: [...value.lineItems, { ...blankQuoteLine(), productId: "" }] }));
@@ -356,7 +364,9 @@ const QuoteEditor = ({ form, setForm, editing, setEditing, products, customers, 
         <div className="flex items-center gap-2">
           <p className="text-sm font-semibold">Item {index + 1}</p>
           {line.productId ? (
-            <span className="rounded-md bg-brand-500/10 px-2 py-0.5 text-xs font-medium text-brand-700 dark:text-brand-300">Saved Catalog Service</span>
+            <span className="rounded-md bg-brand-500/10 px-2 py-0.5 text-xs font-medium text-brand-700 dark:text-brand-300">Saved service</span>
+          ) : line.historyKey ? (
+            <span className="rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">From previous invoices</span>
           ) : (
             <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">Custom / Manual Item</span>
           )}
@@ -365,31 +375,36 @@ const QuoteEditor = ({ form, setForm, editing, setEditing, products, customers, 
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Saved service / product">
-          <select value={line.productId || ""} onChange={(event) => {
-            const selectedId = event.target.value;
-            const product = products.find((item) => item._id === selectedId);
-            if (product) {
+          <select value={lineValue(line)} onChange={(event) => {
+            const item = findSuggestion(options, event.target.value);
+            if (item) {
               updateLine(index, {
-                productId: product._id,
-                productName: product.name,
-                rate: product.sellingPrice ?? line.rate,
-                taxRate: product.taxRate ?? line.taxRate,
-                hsnSac: product.hsnSac || line.hsnSac,
+                productId: item.productId || "",
+                historyKey: item.productId ? "" : item.key,
+                productName: item.name,
+                rate: item.rate ?? line.rate,
+                taxRate: item.taxRate ?? line.taxRate,
+                hsnSac: item.hsnSac || line.hsnSac,
               });
             } else {
-              updateLine(index, { productId: "" });
+              updateLine(index, { productId: "", historyKey: "" });
             }
           }} className="field">
-            <option value="">Custom / Manual (type below)</option>
-            {products.map((product) => (
-              <option key={product._id} value={product._id}>
-                {product.name} {product.itemType === "service" || !product.trackInventory ? "· Service" : `· Stock ${product.currentStock}`}
-              </option>
-            ))}
+            <option value="">Custom / manual (type the description)</option>
+            {groups.saved.length ? (
+              <optgroup label="Saved services">
+                {groups.saved.map((item) => <option key={suggestionValue(item)} value={suggestionValue(item)}>{item.name}{item.rate ? ` · ${money(item.rate)}` : ""}</option>)}
+              </optgroup>
+            ) : null}
+            {groups.history.length ? (
+              <optgroup label="Used on previous invoices">
+                {groups.history.map((item) => <option key={suggestionValue(item)} value={suggestionValue(item)}>{item.name}{item.rate ? ` · ${money(item.rate)}` : ""}</option>)}
+              </optgroup>
+            ) : null}
           </select>
         </Field>
-        <Field label="Item / service description">
-          <input required value={line.productName || ""} onChange={(event) => updateLine(index, { productName: event.target.value })} placeholder="Type item or service name" className="field" />
+        <Field label="Description on quotation">
+          <input required value={line.productName || ""} onChange={(event) => updateLine(index, { productName: event.target.value })} placeholder="e.g. Cabin rent – Cabin 4, 6 seats" className="field" />
         </Field>
       </div>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-[100px_130px_120px_100px_110px_140px]">
@@ -403,8 +418,7 @@ const QuoteEditor = ({ form, setForm, editing, setEditing, products, customers, 
     </div>)}</div>
     <div className="mt-5 flex flex-col gap-4 border-t pt-5 sm:flex-row sm:items-center sm:justify-between" style={{ borderColor: "var(--panel-border)" }}>
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" onClick={addLine} className="rounded-xl border px-4 py-2.5 text-sm font-medium" style={{ borderColor: "var(--panel-border)" }}>+ Add catalog item</button>
-        <button type="button" onClick={addCustomLine} className="rounded-xl border px-4 py-2.5 text-sm font-medium" style={{ borderColor: "var(--panel-border)" }}>+ Add custom item / service</button>
+        <button type="button" onClick={addLine} className="btn-secondary">+ Add item</button>
         <div><p className="text-xs uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Estimated total</p><p className="mt-0.5 text-lg font-semibold">{money(estimatedQuoteTotal(form))}</p></div>
       </div>
       <div className="flex flex-col-reverse gap-2 sm:flex-row">
