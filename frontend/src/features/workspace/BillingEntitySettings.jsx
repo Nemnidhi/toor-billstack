@@ -7,6 +7,7 @@ const roleLabel = { admin: "Admin", accountant: "Accountant", staff: "Staff" };
 
 export default function BillingEntitySettings() {
   const user = authStore((s) => s.user);
+  const business = authStore((s) => s.business);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -33,6 +34,8 @@ export default function BillingEntitySettings() {
   const selectedGrant = selection.userId ? grantFor(selection.userId) : null;
 
   if (user?.role !== "owner") return null;
+  // A client workspace with one company and no second-entity option has nothing to manage here.
+  if (data && !goldhawk && business?.billingEntityCode !== "TOOR") return null;
 
   const run = async (action) => {
     setBusy(true);
@@ -73,7 +76,7 @@ export default function BillingEntitySettings() {
         </div>
       ) : null}
 
-      {data && !goldhawk ? (
+      {data && !goldhawk && business?.billingEntityCode === "TOOR" ? (
         <button disabled={busy} type="button" className="btn-primary" onClick={() => run(() => api.post("/business/billing-entities"))}>
           <PlusCircle size={16} /> Enable Goldhawk Infrabulls Pvt. Ltd.
         </button>

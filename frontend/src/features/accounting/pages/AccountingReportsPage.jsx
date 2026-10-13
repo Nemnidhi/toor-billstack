@@ -32,6 +32,7 @@ import {
   downloadExportXlsx,
 } from "../api";
 import { authStore } from "../../../store/authStore";
+import api from "../../../api/axios";
 import { money } from "../../dashboard/reportPresentation";
 import BackfillTab from "./BackfillTab";
 import BankAccountsTab from "./BankAccountsTab";
@@ -43,6 +44,18 @@ const AccountingReportsPage = () => {
 
   const [activeTab, setActiveTab] = useState("overview");
   const [selectedEntity, setSelectedEntity] = useState("all");
+  // Companies this workspace actually has (a new client workspace has just one).
+  const [entities, setEntities] = useState([]);
+  useEffect(() => {
+    let active = true;
+    api.get("/business/billing-entities")
+      .then((r) => { if (active) setEntities(Array.isArray(r.data?.data) ? r.data.data : []); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+  const primaryEntity = entities.find((e) => e.isPrimary) || entities.find((e) => e.billingEntityCode !== "GOLDHAWK");
+  const goldhawkEntity = entities.find((e) => e.billingEntityCode === "GOLDHAWK");
+  const isMultiEntity = Boolean(goldhawkEntity);
   const [selectedPeriod, setSelectedPeriod] = useState("FY");
   const [dateRange, setDateRange] = useState({ from: "", to: "" });
 
@@ -217,9 +230,9 @@ const AccountingReportsPage = () => {
               onChange={(e) => setSelectedEntity(e.target.value)}
               className="bg-transparent text-xs font-semibold text-slate-800 outline-none dark:text-slate-200"
             >
-              <option value="all">All Companies (Consolidated)</option>
-              <option value="TOOR">The Office On Rent (GST)</option>
-              <option value="GOLDHAWK">Goldhawk Infrabulls (Non-GST)</option>
+              {isMultiEntity ? <option value="all">All Companies (Consolidated)</option> : <option value="all">{primaryEntity?.name || "This company"}</option>}
+              {isMultiEntity ? <option value="TOOR">{primaryEntity?.name || "Primary company"}{primaryEntity?.gstEnabled ? " (GST)" : ""}</option> : null}
+              {isMultiEntity ? <option value="GOLDHAWK">{goldhawkEntity.name}{goldhawkEntity.gstEnabled ? " (GST)" : " (Non-GST)"}</option> : null}
             </select>
           </div>
 
@@ -676,15 +689,15 @@ const AccountingReportsPage = () => {
                   onClick={() => setSelectedEntity("TOOR")}
                   className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 transition"
                 >
-                  View THE OFFICE ON RENT (TOOR) Trial Balance
+                  View {primaryEntity?.name || "primary company"} Trial Balance
                 </button>
-                <button
+                {goldhawkEntity ? <button
                   type="button"
                   onClick={() => setSelectedEntity("GOLDHAWK")}
                   className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 transition"
                 >
-                  View Goldhawk Infrabulls Trial Balance
-                </button>
+                  View {goldhawkEntity.name} Trial Balance
+                </button> : null}
               </div>
             </div>
           ) : tbData ? (

@@ -33,6 +33,7 @@ const errorHandler = (error, req, res, _next) => {
     limit: error.limit,
     recommendedAction: error.recommendedAction,
     duplicates: error.duplicates,
+    errors: error.fieldErrors,
     requestId,
     stack: process.env.NODE_ENV === "production" ? undefined : error.stack,
   });

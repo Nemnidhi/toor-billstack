@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import { EmptyState, ErrorState, LoadingState } from "../../../components/ui/PageState";
 import MetricCard from "../../dashboard/components/MetricCard";
+import CreateWorkspacePanel from "../CreateWorkspacePanel";
 import {
   superAdminBusinessesRequest,
   superAdminCreateModuleOfferRequest,
@@ -523,6 +524,8 @@ const SuperAdminDashboardPage = () => {
             </div>
           </div>
         </section>
+
+        <CreateWorkspacePanel onCreated={refreshAll} />
 
         {overviewError ? <p className="text-sm text-rose-300">{overviewError}</p> : null}
         {successMessage ? <p className="text-sm text-emerald-300">{successMessage}</p> : null}

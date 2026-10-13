@@ -5,6 +5,7 @@ const {
   getProductConfiguration,
   createModuleOfferByAdmin,
   listBusinesses,
+  createClientWorkspaceByAdmin,
   reviewCommercialOrderByAdmin,
   reviewModuleRequest,
   superAdminLogin,
@@ -34,6 +35,7 @@ router.post(
   reviewCommercialOrderByAdmin
 );
 router.get("/businesses", requireSuperAdmin, listBusinesses);
+router.post("/businesses", requireSuperAdmin, createClientWorkspaceByAdmin);
 router.post(
   "/businesses/:businessId/toggle-status",
   requireSuperAdmin,

@@ -214,7 +214,7 @@ const Sidebar = () => {
         <div className="sidebar-footer sidebar-expanded-only">
           <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden="true" />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-semibold">{business?.billingEntityCode === "GOLDHAWK" ? "Goldhawk Billing" : "TOOR Billing"}</p>
+            <p className="truncate text-xs font-semibold">{business?.name || "BillStack"}</p>
             <p className="truncate text-[11px]" style={{ color: "var(--text-muted)" }}>Powered by NEMNIDHI</p>
           </div>
         </div>
