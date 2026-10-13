@@ -567,3 +567,6 @@ button:disabled { cursor: not-allowed; }
 .dashboard-content .rounded-\[2rem\] { border-radius: 0.875rem; }
 .dashboard-content .rounded-2xl.bg-slate-950,
 .dashboard-content .rounded-2xl.border-white\/10 { border-radius: 0.625rem; }
+
+/* Dimmed backdrop behind dialogs (legacy light-theme remaps turn bg-slate-950/50 white). */
+.modal-backdrop { background-color: rgba(15, 23, 42, 0.5) !important; backdrop-filter: blur(2px); }

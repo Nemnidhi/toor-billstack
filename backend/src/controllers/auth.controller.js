@@ -162,6 +162,7 @@ const login = asyncHandler(async (req, res) => {
   // Reset lockout state on successful login
   user.failedLoginAttempts = 0;
   user.lockedUntil = null;
+  user.lastLoginAt = new Date();
   await user.save();
   business = await ensureSelfHostedBusinessProfile(business);
 

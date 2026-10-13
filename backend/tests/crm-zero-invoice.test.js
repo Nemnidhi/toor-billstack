@@ -60,6 +60,8 @@ test('CRM zero invoice is issued through the controller; repeated source and for
   const controller = load('controllers/invoice.controller.js', {
     mongoose: { ...mongoose, startSession: async () => ({ withTransaction: async fn => fn(), endSession() {} }) },
     '../utils/asyncHandler': fn => fn,
+    // The month-level duplicate check is covered by invoice-duplicate.test.js; these tests cover the CRM source rules.
+    '../services/invoice-duplicate.service': { findPossibleDuplicateInvoices: async () => [] },
     '../models/Business': { findById: id => q(String(id) === String(company) ? business : null) },
     '../models/Customer': { findOne(filter) { assert.equal(String(filter.businessId.$in[0]), String(company)); return q(customer); } },
     '../models/Product': { find(filter) { assert.equal(String(filter.businessId), String(company)); return q([]); } },

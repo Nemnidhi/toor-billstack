@@ -1,6 +1,7 @@
 const express = require("express");
 
 const {
+  checkDuplicateInvoices,
   cancelInvoice,
   createInvoice,
   previewInvoiceTax,
@@ -42,6 +43,7 @@ router.get("/service-suggestions", async (req, res, next) => {
     next(error);
   }
 });
+router.post("/duplicate-check", permit("owner", "admin", "staff", "accountant"), checkDuplicateInvoices);
 router.post("/tax-preview", permit("owner", "admin", "staff", "accountant"), validate(invoiceCreateValidator), previewInvoiceTax);
 router.get("/:invoiceId/allocations", validateObjectIdParam("invoiceId"), listInvoiceAllocations);
 router.get("/:invoiceId/e-invoice", validateObjectIdParam("invoiceId"), getEInvoiceDetails);

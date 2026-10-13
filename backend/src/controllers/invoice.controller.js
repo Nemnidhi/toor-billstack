@@ -9,6 +9,7 @@ const Product = require("../models/Product");
 const StockMovement = require("../models/StockMovement");
 const asyncHandler = require("../utils/asyncHandler");
 const AppError = require("../utils/appError");
+const { findPossibleDuplicateInvoices } = require("../services/invoice-duplicate.service");
 const { sendInvoiceEmail } = require("../services/email.service");
 const { dispatchInvoiceIssuedAutomation } = require("../services/communication.service");
 const { buildInventoryFlags } = require("../services/inventory.service");
@@ -301,6 +302,22 @@ const getInvoiceById = asyncHandler(async (req, res) => {
   });
 });
 
+const checkDuplicateInvoices = asyncHandler(async (req, res) => {
+  const customer = await Customer.findOne({ _id: req.body.customerId, businessId: req.tenant.businessId }).select("_id");
+  const duplicates = customer
+    ? await findPossibleDuplicateInvoices({
+      businessId: req.tenant.businessId,
+      customerId: customer._id,
+      invoiceDate: req.body.invoiceDate,
+      crmSourceRef: req.body.crmSourceRef,
+      lineItems: Array.isArray(req.body.lineItems) ? req.body.lineItems : [],
+      grandTotal: req.body.grandTotal,
+      excludeInvoiceId: mongoose.Types.ObjectId.isValid(String(req.body.excludeInvoiceId || "")) ? req.body.excludeInvoiceId : null,
+    })
+    : [];
+  res.status(200).json({ message: "Duplicate check complete", data: { duplicates } });
+});
+
 const createInvoice = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
 
@@ -370,6 +387,28 @@ const createInvoice = asyncHandler(async (req, res) => {
 
       const sequence = business.invoiceNumbering?.nextSequence || 1;
       const invoiceDate = req.body.invoiceDate ? new Date(req.body.invoiceDate) : new Date();
+
+      // Same customer, same billing month, same item or same total: hold the invoice unless
+      // the user has confirmed it is a separate charge. Applies to manual and CRM invoices.
+      if (req.body.allowDuplicate !== true && req.body.allowDuplicate !== "true") {
+        const duplicates = await findPossibleDuplicateInvoices({
+          businessId: req.tenant.businessId,
+          customerId: customer._id,
+          invoiceDate,
+          crmSourceRef,
+          lineItems: normalizedItems,
+          grandTotal: totals.grandTotal,
+          session,
+        });
+        if (duplicates.length) {
+          throw new AppError(
+            `Invoice ${duplicates[0].invoiceNumber} was already issued for ${customer.name} this month. Open it, or confirm this is a separate charge.`,
+            409,
+            { code: "POSSIBLE_DUPLICATE_INVOICE", duplicates }
+          );
+        }
+      }
+
       const invoiceNumber = buildInvoiceNumber({
         prefix: business.invoiceNumbering?.prefix,
         format: business.invoiceNumbering?.format,
@@ -843,6 +882,7 @@ const reissueInvoice = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
+  checkDuplicateInvoices,
   previewInvoiceTax,
   cancelInvoice,
   createInvoice,

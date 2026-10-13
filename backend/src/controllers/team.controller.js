@@ -10,7 +10,15 @@ const {
 } = require("../utils/queryFeatures");
 const { hashPassword } = require("../services/auth.service");
 
-const userSortFields = ["name", "email", "role", "createdAt", "updatedAt"];
+const userSortFields = ["name", "email", "role", "createdAt", "updatedAt", "lastLoginAt"];
+
+// Only the owner can change an owner account or hand out the owner role; otherwise an
+// admin could reset the owner's password and take over the workspace.
+const assertCanManage = (actor, target, nextRole) => {
+  if (actor.role === "owner") return;
+  if (target?.role === "owner") throw new AppError("Only the owner can change the owner account", 403);
+  if (nextRole === "owner") throw new AppError("Only the owner can make someone an owner", 403);
+};
 
 const listTeamMembers = asyncHandler(async (req, res) => {
   const { page, limit, skip } = buildPagination(req.query);
@@ -35,7 +43,7 @@ const listTeamMembers = asyncHandler(async (req, res) => {
   }
 
   const [items, total] = await Promise.all([
-    User.find(filters).select("-password").sort(sort).skip(skip).limit(limit),
+    User.find(filters).select("name email role isActive lastLoginAt passwordChangedAt lockedUntil createdAt updatedAt").sort(sort).skip(skip).limit(limit),
     User.countDocuments(filters),
   ]);
 
@@ -47,6 +55,7 @@ const listTeamMembers = asyncHandler(async (req, res) => {
 
 const createTeamMember = asyncHandler(async (req, res) => {
   const businessId = req.tenant.businessId;
+  assertCanManage(req.user, null, req.body.role);
   if (req.business?.deploymentMode !== "SELF_HOSTED") {
     const subscription = await ensureBusinessSubscription({ businessId, planCode: req.business.planCode });
     if (!isSubscriptionAccessible(subscription)) {
@@ -75,18 +84,17 @@ const createTeamMember = asyncHandler(async (req, res) => {
   const Membership = require("../models/BusinessMembership");
   const Business = require("../models/Business");
 
+  if (user && String(user.businessId) === String(businessId)) {
+    throw new AppError("This email is already on your team. Edit that member instead.", 409);
+  }
   if (user) {
+    // The email belongs to an account in another workspace: grant access here only.
+    // Never overwrite that person's password or name from this business.
     await Membership.findOneAndUpdate(
       { userId: user._id, businessId },
       { $set: { role: req.body.role || "staff" } },
       { upsert: true, new: true }
     );
-    if (req.body.password) {
-      user.password = await hashPassword(req.body.password);
-    }
-    if (req.body.name) user.name = req.body.name.trim();
-    if (req.body.isActive !== undefined) user.isActive = `${req.body.isActive}` === "true";
-    await user.save();
   } else {
     const password = await hashPassword(req.body.password);
     user = await User.create({
@@ -133,6 +141,8 @@ const updateTeamMember = asyncHandler(async (req, res) => {
     throw new AppError("Team member not found", 404);
   }
 
+  assertCanManage(req.user, teamMember, req.body.role);
+
   if (teamMember._id.toString() === req.user._id.toString() && req.body.role && req.body.role !== req.user.role) {
     throw new AppError("You cannot change your own role from this screen", 400);
   }
@@ -165,6 +175,10 @@ const updateTeamMember = asyncHandler(async (req, res) => {
 
   if (req.body.password) {
     teamMember.password = await hashPassword(req.body.password);
+    teamMember.passwordChangedAt = new Date();
+    // A new password set by an admin also unlocks the account.
+    teamMember.failedLoginAttempts = 0;
+    teamMember.lockedUntil = null;
   }
 
   if (req.body.isActive !== undefined) {
@@ -181,6 +195,7 @@ const updateTeamMember = asyncHandler(async (req, res) => {
       email: teamMember.email,
       role: teamMember.role,
       isActive: teamMember.isActive,
+      passwordChangedAt: teamMember.passwordChangedAt,
       businessId: teamMember.businessId,
       createdAt: teamMember.createdAt,
       updatedAt: teamMember.updatedAt,
@@ -201,6 +216,7 @@ const deleteTeamMember = asyncHandler(async (req, res) => {
   if (teamMember._id.toString() === req.user._id.toString()) {
     throw new AppError("You cannot delete your own account", 400);
   }
+  assertCanManage(req.user, teamMember);
 
   await teamMember.deleteOne();
 
