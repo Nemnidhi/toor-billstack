@@ -4,6 +4,7 @@ const Module = require("node:module");
 
 // Stub the Customer model: Customer.find(query) -> chainable over an in-memory list.
 let customers = [];
+let mappings = []; // customers already linked to OTHER CRM clients
 const matches = (row, query) => Object.entries(query).every(([key, cond]) => {
   if (key === "businessId") return true;
   if (cond && cond.$regex) return cond.$regex.test(row[key] || "");
@@ -13,6 +14,7 @@ const chain = (rows) => { const c = { sort: () => c, limit: () => c, select: () 
 const originalLoad = Module._load;
 Module._load = function (request, ...rest) {
   if (request.endsWith("/models/Customer")) return { find: (query) => chain(customers.filter((row) => matches(row, query))) };
+  if (request.endsWith("/models/IntegrationCustomerMapping")) return { find: () => chain(mappings) };
   return originalLoad.call(this, request, ...rest);
 };
 const { findCustomerIdentityMatches } = require("../src/services/integration.service");
@@ -41,6 +43,17 @@ test("an already-duplicated name resolves to the oldest, never a third copy", as
 test("different names sharing a phone are not merged", async () => {
   customers = [{ _id: "1", name: "Priya Shah", phone: "9811111111", email: "", gstNumber: "" }];
   assert.equal(await find({ name: "Rohit Mehta", phone: "9811111111" }), null);
+});
+
+test("a customer already linked to another CRM client is never reused for a new CRM client", async () => {
+  customers = [{ _id: "1", name: "Purpletree Software LLP", phone: "8090807681", email: "", gstNumber: "" }];
+  mappings = [{ customerId: "1" }];
+  assert.equal(await find({ name: "Purpletree Software LLP", phone: "8090807681", externalId: "crm-new" }), null);
+  mappings = [];
+});
+test("same GSTIN with a different name is a separate account", async () => {
+  customers = [{ _id: "1", name: "Acme Holdings", phone: "", email: "", gstNumber: "23AAAAA0000A1Z5" }];
+  assert.equal(await find({ name: "Acme Retail Unit 2", gstNumber: "23AAAAA0000A1Z5" }), null);
 });
 
 const fs = require("node:fs");

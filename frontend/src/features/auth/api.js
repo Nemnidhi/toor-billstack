@@ -719,3 +719,9 @@ export const listServiceSuggestionsRequest = async () => {
   const response = await api.get("/invoices/service-suggestions");
   return response.data.data || [];
 };
+
+// Existing invoices for the same client and billing month that look like the one being issued.
+export const checkDuplicateInvoicesRequest = async (payload) => {
+  const response = await api.post("/invoices/duplicate-check", payload);
+  return response.data.data;
+};

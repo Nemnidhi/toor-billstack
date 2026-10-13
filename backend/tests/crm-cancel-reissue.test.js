@@ -27,6 +27,8 @@ test('after an invoice is cancelled, the same CRM source can be invoiced again; 
   const controller = load('controllers/invoice.controller.js', {
     mongoose: { ...mongoose, startSession: async () => ({ withTransaction: async fn => fn(), endSession() {} }) },
     '../utils/asyncHandler': fn => fn,
+    // The month-level duplicate check is covered by invoice-duplicate.test.js; these tests cover the CRM source rules.
+    '../services/invoice-duplicate.service': { findPossibleDuplicateInvoices: async () => [] },
     '../models/Business': { findById: id => q(String(id) === String(company) ? business : null) },
     '../models/Customer': { findOne: () => q(customer) },
     '../models/Product': { find: () => q([]) },

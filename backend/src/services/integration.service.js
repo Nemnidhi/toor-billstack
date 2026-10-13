@@ -79,25 +79,34 @@ const sameName = (a, b) => {
 // never block billing, so a conflict never raises an HTTP 409. A new customer is
 // created only when no existing one is compatible by name and identifiers.
 const findCustomerIdentityMatches = async ({ businessId, input, session }) => {
+  // A customer already linked to a DIFFERENT CRM client belongs to that client. Re-using it
+  // made a brand-new CRM account open with someone else's invoices, so only BillStack
+  // customers that are not yet linked to another CRM record are candidates.
+  const linkedElsewhere = new Set(
+    (await IntegrationCustomerMapping.find({ businessId, source: input.source, externalId: { $ne: input.externalId } })
+      .select("customerId").session(session))
+      .map((row) => String(row.customerId))
+  );
+  const free = (rows) => rows.filter((row) => !linkedElsewhere.has(String(row._id)));
   if (input.gstNumber) {
-    const rows = await Customer.find({ businessId, gstNumber: input.gstNumber }).sort({ createdAt: 1 }).limit(5).session(session);
+    const rows = free(await Customer.find({ businessId, gstNumber: input.gstNumber }).sort({ createdAt: 1 }).limit(5).session(session));
     const byName = rows.find((row) => sameName(row.name, input.name));
     if (byName) return byName;
-    if (rows.length === 1) return rows[0];
+    // Same GSTIN but a different name is a different account of the same company: keep it separate.
   }
   const hints = [
     input.phone && { phone: { $regex: new RegExp(`^\\D*${input.phone.split("").join("\\D*")}\\D*$`) } },
     input.email && { email: input.email },
   ].filter(Boolean);
   for (const hint of hints) {
-    const rows = await Customer.find({ businessId, ...hint }).sort({ createdAt: 1 }).limit(5).session(session);
+    const rows = free(await Customer.find({ businessId, ...hint }).sort({ createdAt: 1 }).limit(5).session(session));
     const byName = rows.filter((row) => sameName(row.name, input.name));
     if (byName.length) return byName[0];
   }
   // Same name and nothing that contradicts it (no different phone, email or
   // GSTIN on either side): it is the same customer, so reuse it instead of
   // listing the person twice in the invoice customer picker.
-  const sameNamed = await Customer.find({ businessId }).sort({ createdAt: 1 }).limit(2000).select("name phone email gstNumber").session(session);
+  const sameNamed = free(await Customer.find({ businessId }).sort({ createdAt: 1 }).limit(2000).select("name phone email gstNumber").session(session));
   const last10 = (value) => String(value || "").replace(/\D/g, "").slice(-10);
   const differs = (a, b) => Boolean(a) && Boolean(b) && a !== b;
   const compatible = sameNamed.find((row) => sameName(row.name, input.name)
