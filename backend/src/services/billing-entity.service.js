@@ -130,6 +130,10 @@ const ensureGoldhawk = async (identity) => {
     await Membership.updateOne({ userId: identity._id, businessId: existingEntity._id }, { $setOnInsert: { role: "admin" } }, { upsert: true });
     return existingEntity;
   }
+  // The second billing company is specific to The Office On Rent; other workspaces cannot create it.
+  if (home.billingEntityCode !== "TOOR") {
+    throw new AppError("Adding a second billing company is not available for this workspace", 403);
+  }
   const session = await mongoose.startSession();
   let entity;
   try {

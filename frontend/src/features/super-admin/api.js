@@ -135,3 +135,9 @@ export const superAdminReviewCommercialOrderRequest = async (orderId, payload) =
   const response = await superAdminApi.post(`/super-admin/commercial-orders/${orderId}/review`, payload);
   return response.data.data;
 };
+
+// Creates a separate, empty workspace (company) with its own owner login.
+export const superAdminCreateWorkspaceRequest = async (payload) => {
+  const response = await superAdminApi.post("/super-admin/businesses", payload);
+  return response.data.data;
+};

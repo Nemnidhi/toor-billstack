@@ -156,6 +156,21 @@ const getSuperAdminOverview = asyncHandler(async (_req, res) => {
   });
 });
 
+const createClientWorkspaceByAdmin = asyncHandler(async (req, res) => {
+  const { createClientWorkspace } = require("../services/workspace-provisioning.service");
+  const result = await createClientWorkspace(req.body || {});
+  await writeAuditLog({
+    req,
+    businessId: result.business.id,
+    actor: { type: "SYSTEM", email: req.superAdmin?.email || "super-admin", role: "super_admin" },
+    action: "WORKSPACE_CREATED",
+    entityType: "BUSINESS",
+    entityId: result.business.id,
+    metadata: { ownerEmail: result.owner.email },
+  }).catch(() => {});
+  res.status(201).json({ message: "Client workspace created", data: result });
+});
+
 const listBusinesses = asyncHandler(async (req, res) => {
   const { page, limit, skip } = buildPagination(req.query);
   const sort = buildSort(req.query.sortBy, req.query.sortOrder, listBusinessSortFields, "-createdAt");
@@ -356,6 +371,7 @@ const reviewCommercialOrderByAdmin = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
+  createClientWorkspaceByAdmin,
   getSuperAdminOverview,
   listBusinesses,
   superAdminLogin,
