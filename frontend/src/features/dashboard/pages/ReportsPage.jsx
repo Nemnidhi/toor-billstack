@@ -1,3 +1,4 @@
+import Gstr1Panel from "../Gstr1Panel";
 import PageHeader from "../../../components/ui/PageHeader";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -22,7 +23,7 @@ const configurations = {
 };
 
 const ReportsPage = () => {
-  const { business } = authStore();
+  const { business, user } = authStore();
   const [data, setData] = useState(null), [gstData, setGstData] = useState(null), [moduleData, setModuleData] = useState(null);
   const [dateRange, setDateRange] = useState({ from: "", to: "" });
   const [tab, setTab] = useState("overview"), [query, setQuery] = useState({}), [refresh, setRefresh] = useState(0);
@@ -45,7 +46,9 @@ const ReportsPage = () => {
     return () => { current = false; };
   }, [dateRange.from, dateRange.to, refresh]);
   const chartRows = useMemo(() => (data?.monthlySales || []).slice(0, 12).reverse().map(row => ({ month: `${row._id.month}/${String(row._id.year).slice(-2)}`, totalSales: row.totalSales, paidAmount: row.paidAmount })), [data]);
-  const tabs = [{ key: "overview", title: "Overview" }, ...Object.entries(configurations).filter(([, item]) => showModule(item.module)).map(([key, item]) => ({ key, title: item.title })), { key: "gst", title: "GST details" }];
+  // GSTR-1 is for GST-registered companies and for people who handle the books.
+  const canSeeGstr1 = Boolean(business?.gstConfiguration?.enabled) && ["owner", "admin", "accountant"].includes(user?.role);
+  const tabs = [{ key: "overview", title: "Overview" }, ...Object.entries(configurations).filter(([, item]) => showModule(item.module)).map(([key, item]) => ({ key, title: item.title })), { key: "gst", title: "GST details" }, ...(canSeeGstr1 ? [{ key: "gstr1", title: "GSTR-1" }] : [])];
   const activeTab = tabs.some(item => item.key === tab) ? tab : "overview";
   const changePage = (key, page, size) => setQuery(current => ({ ...current, [`${key}Page`]: page, [`${key}Size`]: size }));
   const openDetail = key => { changePage(key, 1, 10); setTab(key); };
@@ -72,6 +75,7 @@ const ReportsPage = () => {
       {["pending", "customers", "expenses"].filter(key => showModule(configurations[key].module)).map(key => dataset(key, true))}
     </> : null}
     {data && configurations[activeTab] && showModule(configurations[activeTab].module) ? dataset(activeTab) : null}
+    {activeTab === "gstr1" ? <Gstr1Panel /> : null}
     {activeTab === "gst" ? <Card title="GST details"><p className="mb-3 text-sm">Input GST: {money(gstData?.purchases?.totalGst)}. Cancelled invoices are excluded.</p><p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>All-date invoice tax: {money(data?.taxReport?.totalTaxCollected)} · Invoice subtotal before discounts: {money(data?.taxReport?.taxableSales)}</p><ReportTable title="HSN/SAC breakdown" rows={Object.entries(gstData?.hsnSacSummary || {}).map(([code, value]) => ({ code, value }))} columns={[{ label: "HSN/SAC", cell: row => row.code }, { label: "Taxable value", numeric: true, cell: row => money(row.value) }]} localPage={hsnPage} onPage={setHsnPage} loading={gstLoading} /></Card> : null}
   </div>;
 };

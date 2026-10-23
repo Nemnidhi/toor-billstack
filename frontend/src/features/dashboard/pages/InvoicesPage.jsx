@@ -277,15 +277,14 @@ const InvoicesPage = () => {
       }
       if (field === 'productName' && !item.productId) {
         const lower = String(value || '').toLowerCase();
-        if (!item.hsnSac || ['997212', '997222', '997211', '998599'].includes(item.hsnSac)) {
-          if (lower.includes('coworking') || lower.includes('desk') || lower.includes('cabin') || lower.includes('meeting room') || lower.includes('office rent')) {
-            next.hsnSac = '997212';
+        // Office / coworking services are filed under SAC 9985 (the CA's code); older defaults are replaced.
+        if (!item.hsnSac || ['9985', '997212', '997222', '997211', '998599'].includes(item.hsnSac)) {
+          if (lower.includes('coworking') || lower.includes('desk') || lower.includes('cabin') || lower.includes('meeting room') || lower.includes('office rent') || lower.includes('virtual office')) {
+            next.hsnSac = '9985';
           } else if (lower.includes('brokerage') || lower.includes('commission') || lower.includes('sale') || lower.includes('purchase') || lower.includes('resale')) {
             next.hsnSac = '997222';
           } else if (lower.includes('residential rent')) {
             next.hsnSac = '997211';
-          } else if (lower.includes('virtual office')) {
-            next.hsnSac = '998599';
           }
         }
       }

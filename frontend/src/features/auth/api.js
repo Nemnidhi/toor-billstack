@@ -725,3 +725,15 @@ export const checkDuplicateInvoicesRequest = async (payload) => {
   const response = await api.post("/invoices/duplicate-check", payload);
   return response.data.data;
 };
+
+// GSTR-1 for one month (YYYY-MM): section rows, totals and a pre-filing checklist.
+export const gstr1Request = async (month) => {
+  const response = await api.get("/gst/gstr1", { params: { month } });
+  return response.data.data;
+};
+
+// The same GSTR-1 as an Excel workbook in the Tally / GST offline-tool layout.
+export const gstr1ExcelRequest = async (month) => {
+  const response = await api.get("/gst/gstr1/export", { params: { month }, responseType: "blob" });
+  return response.data;
+};

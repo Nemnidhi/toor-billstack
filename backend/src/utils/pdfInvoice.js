@@ -77,6 +77,9 @@ const borderLayout = {
   paddingLeft: () => 5, paddingRight: () => 5, paddingTop: () => 5, paddingBottom: () => 5,
 };
 
+// The Office On Rent files all its office / coworking services under SAC 9985 (as advised by its CA).
+const DEFAULT_SERVICE_SAC = "9985";
+
 const resolveItemHsnSac = (item = {}, context = {}) => {
   const explicit = compact(item?.hsnSacCode || item?.hsnSac);
   if (explicit) return explicit;
@@ -87,12 +90,12 @@ const resolveItemHsnSac = (item = {}, context = {}) => {
 
   // Coworking / Managed Spaces / Shared Offices
   if (name.includes("coworking") || name.includes("co-working") || name.includes("desk") || name.includes("cabin") || name.includes("workstation") || name.includes("meeting room") || name.includes("flex space") || name.includes("workspace")) {
-    return "997212";
+    return DEFAULT_SERVICE_SAC;
   }
 
   // Virtual Office / Support Services
   if (name.includes("virtual office") || name.includes("mail handling") || name.includes("business address")) {
-    return "998599";
+    return DEFAULT_SERVICE_SAC;
   }
 
   // Brokerage / Agency / Commission (Commercial or Residential Sale / Purchase / Resale / Rent facilitation)
@@ -102,12 +105,12 @@ const resolveItemHsnSac = (item = {}, context = {}) => {
 
   // Rent / Lease of Real Estate
   if (name.includes("rent") || name.includes("lease") || name.includes("tenant") || purpose.includes("rent")) {
-    return isResidential ? "997211" : "997212";
+    return isResidential ? "997211" : DEFAULT_SERVICE_SAC;
   }
 
   // Maintenance / CAM / Amenities
   if (name.includes("maintenance") || name.includes("cam") || name.includes("amenit")) {
-    return "997212";
+    return DEFAULT_SERVICE_SAC;
   }
 
   // Consulting / Professional
@@ -117,7 +120,7 @@ const resolveItemHsnSac = (item = {}, context = {}) => {
 
   // Fallback for THE OFFICE ON RENT / TOOR
   if (context.isToorEntity || context.billingEntityCode === "TOOR") {
-    return name.includes("broker") ? "997222" : "997212";
+    return name.includes("broker") ? "997222" : DEFAULT_SERVICE_SAC;
   }
 
   return "";
