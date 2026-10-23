@@ -6,6 +6,8 @@ const Invoice = require("../src/models/Invoice");
 const CreditNote = require("../src/models/CreditNote");
 const { buildGstr1, parseMonth, posLabel } = require("../src/services/gstr1.service");
 const { buildGstr1Workbook } = require("../src/utils/gstr1-excel");
+const { buildGstr1Report } = require("../src/utils/gstr1-report");
+const ExcelJS = require("exceljs");
 const { resolveItemHsnSac } = require("../src/utils/pdfInvoice");
 
 const chain = (rows) => { const c = { populate: () => c, sort: () => c, select: () => c, lean: async () => rows }; return c; };
@@ -65,6 +67,20 @@ test("GSTR-1: invoices are split into B2B, B2CS and B2CL with HSN and document s
   assert.equal(b2b[3][0], "GSTIN/UIN of Recipient");
   assert.equal(b2b[4][0], "27AAACR5055K1Z5");
   assert.equal(b2b[4][11], 50000);
+
+  // Formatted report: summary first, then one sheet per GSTR-1 table, with totals.
+  const report = new ExcelJS.Workbook();
+  await report.xlsx.load(await buildGstr1Report(data));
+  assert.deepEqual(report.worksheets.map((ws) => ws.name), ["Summary", "4A B2B", "5 B2CL", "7 B2CS", "9B CDNR", "9B CDNUR", "8 Nil-Exempt", "12 HSN B2B", "12 HSN B2C", "13 Documents"]);
+  const sheet = report.getWorksheet("4A B2B");
+  assert.equal(sheet.getCell("B5").value, "GSTIN/UIN of Recipient");
+  assert.equal(sheet.getCell("B6").value, "27AAACR5055K1Z5");
+  assert.equal(sheet.getCell("A8").value, "Total");
+  assert.equal(sheet.getCell("K8").value, 70000);
+  assert.equal(sheet.getCell("L8").value, 9000);
+  const summary = report.getWorksheet("Summary");
+  assert.equal(summary.getCell("D12").value, 232000);
+  assert.equal(data.hsnB2B[0].description, "Support services");
 });
 
 test("GSTR-1: missing SAC and GST-disabled businesses are reported", async () => {

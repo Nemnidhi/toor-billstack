@@ -32,7 +32,7 @@ const Gstr1Panel = () => {
   const [month, setMonth] = useState(previousMonth());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [downloading, setDownloading] = useState(false);
+  const [downloading, setDownloading] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -45,14 +45,15 @@ const Gstr1Panel = () => {
     return () => { active = false; };
   }, [month]);
 
-  const download = async () => {
-    setDownloading(true); setError("");
+  const download = async (format) => {
+    setDownloading(format || "report"); setError("");
     try {
-      const blob = await gstr1ExcelRequest(month);
+      const blob = await gstr1ExcelRequest(month, format);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
+      const name = data?.fileName || `GSTR1_${month}.xlsx`;
       link.href = url;
-      link.download = data?.fileName || `GSTR1_${month}.xlsx`;
+      link.download = format === "offline" ? name.replace(/\.xlsx$/, "_offline-tool.xlsx") : name;
       link.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -60,7 +61,7 @@ const Gstr1Panel = () => {
       try { message = JSON.parse(await err.response?.data?.text?.())?.message || message; } catch { /* not JSON */ }
       setError(message);
     } finally {
-      setDownloading(false);
+      setDownloading("");
     }
   };
 
@@ -77,7 +78,7 @@ const Gstr1Panel = () => {
           <div>
             <h2 className="text-base font-bold">GSTR-1 (sales return)</h2>
             <p className="mt-1 max-w-2xl text-sm" style={{ color: "var(--text-muted)" }}>
-              Every invoice issued in the month, in the same Excel format as Tally's GSTR-1 export. Send it to your CA or import it into the GST offline tool.
+              Every invoice issued in the month, table by table (B2B, B2C, credit notes, HSN/SAC, documents) with a tax summary. Download the Excel and send it to your CA.
             </p>
           </div>
         </div>
@@ -85,8 +86,11 @@ const Gstr1Panel = () => {
           <label className="form-field"><span className="form-label">Tax period</span>
             <input type="month" value={month} max={new Date().toISOString().slice(0, 7)} onChange={(event) => event.target.value && setMonth(event.target.value)} className="field" />
           </label>
-          <button type="button" onClick={download} disabled={downloading || loading || !data} className="btn-primary">
-            {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Download Excel
+          <button type="button" onClick={() => download()} disabled={Boolean(downloading) || loading || !data} className="btn-primary">
+            {downloading === "report" ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Download GSTR-1 Excel
+          </button>
+          <button type="button" onClick={() => download("offline")} disabled={Boolean(downloading) || loading || !data} className="btn-secondary" title="Plain sheet layout for uploading into the GST offline tool">
+            {downloading === "offline" ? <Loader2 size={16} className="animate-spin" /> : <FileSpreadsheet size={16} />} Offline-tool format
           </button>
         </div>
       </div>

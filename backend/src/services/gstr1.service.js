@@ -50,7 +50,15 @@ const parseMonth = (month) => {
 // Natural sort so INV-2026-0009 comes before INV-2026-0010.
 const naturalCompare = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
 
-const blankHsnRow = (hsn, rate) => ({ hsn, description: "", uqc: "NA", quantity: 0, totalValue: 0, rate, taxableValue: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 });
+const SAC_DESCRIPTIONS = {
+  "9985": "Support services",
+  "997211": "Rental of residential property",
+  "997212": "Rental of non-residential property",
+  "997222": "Real estate brokerage services",
+  "998599": "Other support services",
+  "998311": "Management consulting services",
+};
+const blankHsnRow = (hsn, rate) => ({ hsn, description: SAC_DESCRIPTIONS[hsn] || "", uqc: "NA", quantity: 0, totalValue: 0, rate, taxableValue: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 });
 const isServiceCode = (hsn) => /^99/.test(String(hsn || ""));
 
 const buildGstr1 = async ({ businessId, month }) => {
@@ -87,6 +95,12 @@ const buildGstr1 = async ({ businessId, month }) => {
     intraUnregistered: { nil: 0, exempt: 0, nonGst: 0 },
   };
   const hsnB2B = new Map();
+  const addB2cs = (pos, rate, amounts, sign) => {
+    const key = `${pos}|${rate}`;
+    const row = b2csMap.get(key) || { type: "OE", pos: posLabel(pos), rate, taxableValue: 0, igst: 0, cgst: 0, sgst: 0 };
+    ["taxableValue", "igst", "cgst", "sgst"].forEach((k) => { row[k] = round2(row[k] + sign * Number(amounts[k] || 0)); });
+    b2csMap.set(key, row);
+  };
   const hsnB2C = new Map();
   const totals = { invoices: 0, invoiceValue: 0, taxableValue: 0, igst: 0, cgst: 0, sgst: 0 };
 
@@ -130,8 +144,11 @@ const buildGstr1 = async ({ businessId, month }) => {
 
       const hsn = String(line.hsnSac || inv.lineItems?.[index]?.hsnSac || "").trim();
       if (!hsn) issue("error", number, `Line ${index + 1} has no HSN/SAC code.`);
-      const row = byRate.get(rate) || { rate, taxableValue: 0 };
+      const row = byRate.get(rate) || { rate, taxableValue: 0, igst: 0, cgst: 0, sgst: 0 };
       row.taxableValue = round2(row.taxableValue + taxable);
+      row.igst = round2(row.igst + Number(line.igst || 0));
+      row.cgst = round2(row.cgst + Number(line.cgst || 0));
+      row.sgst = round2(row.sgst + Number(line.sgst || 0) + Number(line.utgst || 0));
       byRate.set(rate, row);
 
       const hsnMap = registered ? hsnB2B : hsnB2C;
@@ -151,16 +168,14 @@ const buildGstr1 = async ({ businessId, month }) => {
       totals.sgst = round2(totals.sgst + Number(line.sgst || 0) + Number(line.utgst || 0));
     });
 
-    for (const { rate, taxableValue } of byRate.values()) {
+    for (const { rate, taxableValue, igst, cgst, sgst } of byRate.values()) {
+      const tax = { igst, cgst, sgst };
       if (registered) {
-        b2b.push({ gstin: recipientGstin, name, invoiceNumber: number, invoiceDate: inv.invoiceDate, invoiceValue, pos: posLabel(pos), reverseCharge: "N", invoiceType: "Regular B2B", rate, taxableValue });
+        b2b.push({ gstin: recipientGstin, name, invoiceNumber: number, invoiceDate: inv.invoiceDate, invoiceValue, pos: posLabel(pos), reverseCharge: "N", invoiceType: "Regular B2B", rate, taxableValue, ...tax });
       } else if (interState && invoiceValue > B2CL_LIMIT) {
-        b2cl.push({ invoiceNumber: number, invoiceDate: inv.invoiceDate, invoiceValue, pos: posLabel(pos), rate, taxableValue });
+        b2cl.push({ invoiceNumber: number, invoiceDate: inv.invoiceDate, invoiceValue, pos: posLabel(pos), rate, taxableValue, ...tax });
       } else {
-        const key = `${pos}|${rate}`;
-        const row = b2csMap.get(key) || { type: "OE", pos: posLabel(pos), rate, taxableValue: 0 };
-        row.taxableValue = round2(row.taxableValue + taxableValue);
-        b2csMap.set(key, row);
+        addB2cs(pos, rate, { taxableValue, ...tax }, 1);
       }
     }
   }
@@ -182,19 +197,21 @@ const buildGstr1 = async ({ businessId, month }) => {
       const rate = Number(gstLine.rate || 0);
       // Credit amounts include tax; take back the taxable part in proportion.
       const share = Number(sold.itemTotal || 0) > 0 ? Number(line.amount || 0) / Number(sold.itemTotal) : 0;
-      const taxable = round2(Number(gstLine.taxableValue || 0) * share);
-      byRate.set(rate, round2((byRate.get(rate) || 0) + taxable));
+      const row = byRate.get(rate) || { taxableValue: 0, igst: 0, cgst: 0, sgst: 0 };
+      row.taxableValue = round2(row.taxableValue + Number(gstLine.taxableValue || 0) * share);
+      row.igst = round2(row.igst + Number(gstLine.igst || 0) * share);
+      row.cgst = round2(row.cgst + Number(gstLine.cgst || 0) * share);
+      row.sgst = round2(row.sgst + (Number(gstLine.sgst || 0) + Number(gstLine.utgst || 0)) * share);
+      byRate.set(rate, row);
     }
-    for (const [rate, taxableValue] of byRate) {
+    for (const [rate, amounts] of byRate) {
+      const common = { noteNumber: note.creditNoteNumber, noteDate: note.createdAt, noteType: "C", pos: posLabel(pos), noteValue: round2(note.totalAmount), rate, ...amounts };
       if (recipientGstin) {
-        cdnr.push({ gstin: recipientGstin, name: inv.customerDetails?.name || inv.customerId?.name || "", noteNumber: note.creditNoteNumber, noteDate: note.createdAt, noteType: "C", pos: posLabel(pos), reverseCharge: "N", noteSupplyType: "Regular B2B", noteValue: round2(note.totalAmount), rate, taxableValue });
+        cdnr.push({ gstin: recipientGstin, name: inv.customerDetails?.name || inv.customerId?.name || "", invoiceNumber: inv.invoiceNumber, reverseCharge: "N", noteSupplyType: "Regular B2B", ...common });
       } else if (interState && Number(inv.grandTotal) > B2CL_LIMIT) {
-        cdnur.push({ urType: "B2CL", noteNumber: note.creditNoteNumber, noteDate: note.createdAt, noteType: "C", pos: posLabel(pos), noteValue: round2(note.totalAmount), rate, taxableValue });
+        cdnur.push({ urType: "B2CL", invoiceNumber: inv.invoiceNumber, ...common });
       } else {
-        const key = `${pos}|${rate}`;
-        const row = b2csMap.get(key) || { type: "OE", pos: posLabel(pos), rate, taxableValue: 0 };
-        row.taxableValue = round2(row.taxableValue - taxableValue);
-        b2csMap.set(key, row);
+        addB2cs(pos, rate, amounts, -1);
       }
     }
   }

@@ -732,8 +732,8 @@ export const gstr1Request = async (month) => {
   return response.data.data;
 };
 
-// The same GSTR-1 as an Excel workbook in the Tally / GST offline-tool layout.
-export const gstr1ExcelRequest = async (month) => {
-  const response = await api.get("/gst/gstr1/export", { params: { month }, responseType: "blob" });
+// Formatted GSTR-1 workbook; format "offline" returns the GST offline-tool upload layout.
+export const gstr1ExcelRequest = async (month, format) => {
+  const response = await api.get("/gst/gstr1/export", { params: { month, ...(format ? { format } : {}) }, responseType: "blob" });
   return response.data;
 };
