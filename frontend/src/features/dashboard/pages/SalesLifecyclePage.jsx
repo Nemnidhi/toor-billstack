@@ -410,7 +410,7 @@ const QuoteEditor = ({ form, setForm, editing, setEditing, products, customers, 
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-[100px_130px_120px_100px_110px_140px]">
         <Field label="Qty"><input required type="number" min="0.01" step="0.01" value={line.quantity} onChange={(event) => updateLine(index, { quantity: event.target.value })} className="field" /></Field>
         <Field label="Rate"><input type="number" min="0" step="0.01" value={line.rate} onChange={(event) => updateLine(index, { rate: event.target.value })} className="field" /></Field>
-        <Field label="HSN / SAC"><input value={line.hsnSac || ""} onChange={(event) => updateLine(index, { hsnSac: event.target.value })} placeholder="e.g. 997212" className="field" /></Field>
+        <Field label="HSN / SAC"><input value={line.hsnSac || ""} onChange={(event) => updateLine(index, { hsnSac: event.target.value })} placeholder="e.g. 9985" className="field" /></Field>
         <Field label="GST %"><input type="number" min="0" step="0.01" value={line.taxRate} onChange={(event) => updateLine(index, { taxRate: event.target.value })} className="field" /></Field>
         <Field label="Discount"><input type="number" min="0" step="0.01" value={line.discountValue} onChange={(event) => updateLine(index, { discountValue: event.target.value })} className="field" /></Field>
         <Field label="Discount type"><select value={line.discountType} onChange={(event) => updateLine(index, { discountType: event.target.value })} className="field"><option value="percent">Percent</option><option value="amount">Amount</option></select></Field>
