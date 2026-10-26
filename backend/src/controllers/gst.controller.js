@@ -5,14 +5,14 @@ const summary=asyncHandler(async(req,res)=>{const businessId=req.tenant.business
 const { buildGstr1 } = require("../services/gstr1.service");
 const { buildGstr1Report } = require("../utils/gstr1-report");
 
-// GSTR-1 preview for one month (?month=YYYY-MM): section rows, totals and a checklist.
+// GSTR-1 preview (?month=YYYY-MM or ?from=YYYY-MM-DD&to=YYYY-MM-DD): section rows, totals and a checklist.
 const gstr1 = asyncHandler(async (req, res) => {
-  res.json({ data: await buildGstr1({ businessId: req.tenant.businessId, month: req.query.month }) });
+  res.json({ data: await buildGstr1({ businessId: req.tenant.businessId, month: req.query.month, from: req.query.from, to: req.query.to }) });
 });
 
 // Formatted GSTR-1 workbook for the CA.
 const gstr1Excel = asyncHandler(async (req, res) => {
-  const data = await buildGstr1({ businessId: req.tenant.businessId, month: req.query.month });
+  const data = await buildGstr1({ businessId: req.tenant.businessId, month: req.query.month, from: req.query.from, to: req.query.to });
   const buffer = await buildGstr1Report(data);
   const { fileName } = data;
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");

@@ -14,7 +14,6 @@ const COLORS = { brand: "1F3A5F", brandSoft: "E8EEF6", header: "24476B", section
 const MONEY = '#,##0.00;[Red]-#,##0.00;"-"';
 const DATE = "dd-mm-yyyy";
 const RATE = '0.##"%"';
-const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const TABLE_NAMES = { "4A": "B2B", "5": "B2C Large", "7": "B2C Others" };
 
 const thin = { style: "thin", color: { argb: `FF${COLORS.border}` } };
@@ -22,7 +21,7 @@ const borders = { top: thin, left: thin, bottom: thin, right: thin };
 const fill = (hex) => ({ type: "pattern", pattern: "solid", fgColor: { argb: `FF${hex}` } });
 const round2 = (v) => Math.round((Number(v || 0) + Number.EPSILON) * 100) / 100;
 const sum = (rows, key) => round2(rows.reduce((total, row) => total + Number(row[key] || 0), 0));
-const periodText = (period) => { const [y, m] = String(period.month).split("-").map(Number); return `${MONTH_NAMES[m - 1]} ${y}`; };
+const periodText = (period) => period.title || period.label || "";
 
 // Column definitions: { header, value(row, index), type, width }
 const col = (header, value, type = "text", width = 16) => ({ header, value: typeof value === "function" ? value : (row) => row[value], type, width });

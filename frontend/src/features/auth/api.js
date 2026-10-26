@@ -726,14 +726,14 @@ export const checkDuplicateInvoicesRequest = async (payload) => {
   return response.data.data;
 };
 
-// GSTR-1 for one month (YYYY-MM): section rows, totals and a pre-filing checklist.
-export const gstr1Request = async (month) => {
-  const response = await api.get("/gst/gstr1", { params: { month } });
+// GSTR-1 for a period: { month: "YYYY-MM" } or { from: "YYYY-MM-DD", to: "YYYY-MM-DD" }.
+export const gstr1Request = async (period) => {
+  const response = await api.get("/gst/gstr1", { params: period });
   return response.data.data;
 };
 
 // Formatted GSTR-1 workbook for the CA.
-export const gstr1ExcelRequest = async (month) => {
-  const response = await api.get("/gst/gstr1/export", { params: { month }, responseType: "blob" });
+export const gstr1ExcelRequest = async (period) => {
+  const response = await api.get("/gst/gstr1/export", { params: period, responseType: "blob" });
   return response.data;
 };

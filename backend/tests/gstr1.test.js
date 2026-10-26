@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const Business = require("../src/models/Business");
 const Invoice = require("../src/models/Invoice");
 const CreditNote = require("../src/models/CreditNote");
-const { buildGstr1, parseMonth, posLabel } = require("../src/services/gstr1.service");
+const { buildGstr1, parseMonth, parsePeriod, posLabel } = require("../src/services/gstr1.service");
 const { buildGstr1Report } = require("../src/utils/gstr1-report");
 const ExcelJS = require("exceljs");
 const { resolveItemHsnSac } = require("../src/utils/pdfInvoice");
@@ -30,6 +30,13 @@ test("GSTR-1: month parsing and place-of-supply labels", () => {
   assert.equal(parseMonth("2026-09").label, "SEP-2026");
   assert.throws(() => parseMonth("2026-13"));
   assert.equal(posLabel("23"), "23-Madhya Pradesh");
+  assert.equal(parsePeriod({ from: "2026-10-01", to: "2026-12-31" }).title, "Q3 FY 2026-27 (Oct 2026 – Dec 2026)");
+  assert.equal(parsePeriod({ from: "2026-04-01", to: "2026-09-30" }).label, "H1_FY2026-27");
+  assert.equal(parsePeriod({ from: "2026-04-01", to: "2027-03-31" }).type, "year");
+  assert.equal(parsePeriod({ from: "2026-10-05", to: "2026-10-20" }).title, "05-10-2026 to 20-10-2026");
+  assert.equal(parsePeriod({ from: "2026-10-01", to: "2026-10-31" }).label, "OCT-2026");
+  assert.throws(() => parsePeriod({ from: "2026-10-20", to: "2026-10-05" }));
+  assert.throws(() => parsePeriod({ from: "2025-01-01", to: "2026-10-05" }));
 });
 
 test("GSTR-1: invoices are split into B2B, B2CS and B2CL with HSN and document summary", async () => {
@@ -96,7 +103,9 @@ test("GSTR-1: invoices issued while GST was off are rebuilt from their lines", a
     customerDetails: { gstNumber: gstin, name: "Client" }, customerId: { gstNumber: gstin, stateCode },
     lineItems: [{ productName: "Cabin", hsnSac: "9985", quantity: 1, rate: 10000, taxRate: 18, taxableAmount: 10000, tax: 1800, itemTotal: 11800 }],
   });
-  stub([old("INV-1", "27AAACR5055K1Z5", ""), old("INV-2", "", "23"), old("INV-3", "", "")]);
+  const noSac = old("INV-3", "", "");
+  noSac.lineItems[0].hsnSac = "";
+  stub([old("INV-1", "27AAACR5055K1Z5", ""), old("INV-2", "", "23"), noSac]);
   const data = await buildGstr1({ businessId: "507f1f77bcf86cd799439011", month: "2026-10" });
   assert.equal(data.b2b.length, 1);
   assert.equal(data.b2b[0].igst, 1800);
@@ -105,4 +114,7 @@ test("GSTR-1: invoices issued while GST was off are rebuilt from their lines", a
   assert.equal(data.issues.filter((i) => i.level === "error").length, 0);
   assert.ok(data.issues.some((i) => /GST was off/.test(i.message) && /INV-1, INV-2, INV-3/.test(i.message)));
   assert.ok(data.issues.some((i) => /INV-3/.test(i.message) && /place of supply/.test(i.message) && !/INV-2/.test(i.message)));
+  // Missing SAC falls back to the code printed on the invoice (9985 for a cabin).
+  assert.ok(data.issues.some((i) => /SAC was not saved/.test(i.message) && /INV-3/.test(i.message) && /9985/.test(i.message)));
+  assert.equal(data.hsnB2C[0].hsn, "9985");
 });

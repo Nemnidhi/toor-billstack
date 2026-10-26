@@ -4,9 +4,10 @@ const Invoice = require("../models/Invoice");
 const CreditNote = require("../models/CreditNote");
 const AppError = require("../utils/appError");
 const policy = require("../../../shared/gst-policy.cjs");
+const { resolveItemHsnSac } = require("../utils/pdfInvoice");
 
 /**
- * GSTR-1 for one month, built from what was frozen on each invoice when it was issued
+ * GSTR-1 for a month, quarter or any date range, built from what was frozen on each invoice when it was issued
  * (gstSnapshot: place of supply, per-line rate, taxable value, CGST/SGST/IGST, HSN/SAC).
  * The layout mirrors the TallyPrime / GST offline-tool Excel the CA already uses.
  */
@@ -33,19 +34,76 @@ const posLabel = (code) => {
   return POS_NAMES[key] ? `${key}-${POS_NAMES[key]}` : "";
 };
 
-const parseMonth = (month) => {
-  const match = String(month || "").match(/^(\d{4})-(0[1-9]|1[0-2])$/);
-  if (!match) throw new AppError("Choose a month as YYYY-MM.", 400);
-  const year = Number(match[1]);
-  const mon = Number(match[2]);
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const DAY_MS = 24 * 60 * 60 * 1000;
+const pad2 = (n) => String(n).padStart(2, "0");
+const fyText = (year) => `FY ${year}-${String(year + 1).slice(2)}`; // year = April's calendar year
+
+const parseDay = (value) => {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return date.getUTCDate() === Number(match[3]) ? date : null;
+};
+
+/**
+ * Tax period from either ?month=YYYY-MM or ?from=YYYY-MM-DD&to=YYYY-MM-DD (inclusive).
+ * Works out a readable title: month, quarter, half-year, financial year or custom range.
+ */
+const parsePeriod = ({ month, from, to } = {}) => {
+  let first;
+  let last;
+  if (month) {
+    const match = String(month).match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+    if (!match) throw new AppError("Choose a month as YYYY-MM.", 400);
+    first = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1));
+    last = new Date(Date.UTC(Number(match[1]), Number(match[2]), 0));
+  } else {
+    first = parseDay(from);
+    last = parseDay(to);
+    if (!first || !last) throw new AppError("Choose a month, quarter, year or a from/to date range.", 400);
+  }
+  if (last < first) throw new AppError("The end date is before the start date.", 400);
+  if ((last - first) / DAY_MS > 366) throw new AppError("Choose a period of one year or less.", 400);
+
+  const y1 = first.getUTCFullYear(); const m1 = first.getUTCMonth();
+  const y2 = last.getUTCFullYear(); const m2 = last.getUTCMonth();
+  const wholeMonths = first.getUTCDate() === 1 && new Date(last.getTime() + DAY_MS).getUTCDate() === 1;
+  const months = (y2 - y1) * 12 + (m2 - m1) + 1;
+  const fy = m1 >= 3 ? y1 : y1 - 1;
+  const short = (y, m) => `${MONTHS[m]}-${y}`;
+  const span = `${MONTH_NAMES[m1].slice(0, 3)} ${y1} – ${MONTH_NAMES[m2].slice(0, 3)} ${y2}`;
+
+  let type = "custom";
+  let title;
+  let label;
+  if (wholeMonths && months === 1) {
+    type = "month"; title = `${MONTH_NAMES[m1]} ${y1}`; label = short(y1, m1);
+  } else if (wholeMonths && months === 3 && (m1 - 3 + 12) % 3 === 0) {
+    const q = ((m1 - 3 + 12) % 12) / 3 + 1;
+    type = "quarter"; title = `Q${q} ${fyText(fy)} (${span})`; label = `Q${q}_${fyText(fy).replace(" ", "")}`;
+  } else if (wholeMonths && months === 6 && (m1 === 3 || m1 === 9)) {
+    const h = m1 === 3 ? 1 : 2;
+    type = "half-year"; title = `H${h} ${fyText(fy)} (${span})`; label = `H${h}_${fyText(fy).replace(" ", "")}`;
+  } else if (wholeMonths && months === 12 && m1 === 3) {
+    type = "year"; title = `${fyText(fy)} (${span})`; label = fyText(fy).replace(" ", "");
+  } else if (wholeMonths) {
+    title = span; label = `${short(y1, m1)}_to_${short(y2, m2)}`;
+  } else {
+    const d = (x) => `${pad2(x.getUTCDate())}-${pad2(x.getUTCMonth() + 1)}-${x.getUTCFullYear()}`;
+    title = `${d(first)} to ${d(last)}`; label = `${d(first)}_to_${d(last)}`;
+  }
   return {
-    month: `${match[1]}-${match[2]}`,
-    label: `${MONTHS[mon - 1]}-${year}`,
-    // Calendar month in India (IST). Date-only invoice dates are stored at UTC midnight.
-    start: new Date(Date.UTC(year, mon - 1, 1) - IST_OFFSET_MS),
-    end: new Date(Date.UTC(year, mon, 1) - IST_OFFSET_MS),
+    type, title, label,
+    from: first.toISOString().slice(0, 10),
+    to: last.toISOString().slice(0, 10),
+    month: type === "month" ? `${y1}-${pad2(m1 + 1)}` : "",
+    // Days in India (IST). Date-only invoice dates are stored at UTC midnight.
+    start: new Date(first.getTime() - IST_OFFSET_MS),
+    end: new Date(last.getTime() + DAY_MS - IST_OFFSET_MS),
   };
 };
+const parseMonth = (month) => parsePeriod({ month });
 
 // Natural sort so INV-2026-0009 comes before INV-2026-0010.
 const naturalCompare = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
@@ -79,8 +137,8 @@ const rebuildSnapshot = (inv, gstinForState, supplierState) => {
   return { placeOfSupplyCode: pos, lines, assumedPos: !fromGstin && !policy.validState(fromCustomer) };
 };
 
-const buildGstr1 = async ({ businessId, month }) => {
-  const period = parseMonth(month);
+const buildGstr1 = async ({ businessId, month, from, to }) => {
+  const period = parsePeriod({ month, from, to });
   const business = await Business.findById(businessId).lean();
   if (!business) throw new AppError("Business not found", 404);
   if (!business.gstConfiguration?.enabled) {
@@ -102,6 +160,10 @@ const buildGstr1 = async ({ businessId, month }) => {
 
   const issues = [];
   const rebuilt = [];
+  const inferredSac = [];
+  const inferredCodes = [];
+  const isToor = business.billingEntityCode === "TOOR" || /office on rent/i.test(business.name || "");
+  const sacContext = (inv) => ({ isToorEntity: isToor, billingEntityCode: business.billingEntityCode, billingPurpose: inv.crmSourceRef?.billingPurpose || "" });
   const assumedPos = [];
   const issue = (level, invoiceNumber, message) => issues.push({ level, invoiceNumber, message });
 
@@ -167,8 +229,13 @@ const buildGstr1 = async ({ businessId, month }) => {
       if (classification === "EXEMPT") { exemp[bucket].exempt = round2(exemp[bucket].exempt + taxable); return; }
       if (rate === 0) { exemp[bucket].nil = round2(exemp[bucket].nil + taxable); return; }
 
-      const hsn = String(line.hsnSac || inv.lineItems?.[index]?.hsnSac || "").trim();
-      if (!hsn) issue("error", number, `Line ${index + 1} has no HSN/SAC code.`);
+      let hsn = String(line.hsnSac || inv.lineItems?.[index]?.hsnSac || "").trim();
+      if (!hsn) {
+        // Same SAC the invoice PDF prints for this line.
+        hsn = resolveItemHsnSac(inv.lineItems?.[index] || {}, sacContext(inv));
+        if (hsn) { inferredSac.push(number); inferredCodes.push(hsn); }
+        else issue("error", number, `Line ${index + 1} has no HSN/SAC code.`);
+      }
       const row = byRate.get(rate) || { rate, taxableValue: 0, igst: 0, cgst: 0, sgst: 0 };
       row.taxableValue = round2(row.taxableValue + taxable);
       row.igst = round2(row.igst + Number(line.igst || 0));
@@ -257,11 +324,17 @@ const buildGstr1 = async ({ businessId, month }) => {
     issue("warning", "", `Client state is not saved for ${assumedPos.join(", ")}, so place of supply is taken as your own state (CGST + SGST). Add the client's state or GSTIN if it is different.`);
   }
   if (!gstin || !policy.validGstin(gstin)) issue("error", "", "Your GSTIN is missing in Settings → GST & Tax.");
-  if (!issued.length) issue("info", "", "No invoices were issued in this month.");
+  if (!issued.length) issue("info", "", "No invoices were issued in this period.");
+  if (!["month", "quarter"].includes(period.type)) {
+    issue("info", "", "GSTR-1 is filed monthly or quarterly (QRMP). Use this period for review or reconciliation, and file month- or quarter-wise.");
+  }
+  if (inferredSac.length) {
+    issue("info", "", `SAC was not saved on some lines of ${[...new Set(inferredSac)].join(", ")}; the code printed on the invoice (${[...new Set(inferredCodes)].join(", ")}) is used.`);
+  }
 
   const sortByNumber = (a, b) => naturalCompare(a.invoiceNumber || a.noteNumber, b.invoiceNumber || b.noteNumber);
   return {
-    period: { month: period.month, label: period.label },
+    period: { type: period.type, title: period.title, label: period.label, from: period.from, to: period.to, month: period.month },
     gstin,
     businessName: business.name,
     fileName: `${gstin || "GSTIN"}_GSTR1_${period.label}.xlsx`,
@@ -280,4 +353,4 @@ const buildGstr1 = async ({ businessId, month }) => {
   };
 };
 
-module.exports = { buildGstr1, parseMonth, posLabel, POS_NAMES, B2CL_LIMIT, _test: { naturalCompare } };
+module.exports = { buildGstr1, parseMonth, parsePeriod, posLabel, POS_NAMES, B2CL_LIMIT, _test: { naturalCompare } };
