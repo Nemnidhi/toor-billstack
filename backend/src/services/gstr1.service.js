@@ -66,7 +66,7 @@ const buildGstr1 = async ({ businessId, month }) => {
   const business = await Business.findById(businessId).lean();
   if (!business) throw new AppError("Business not found", 404);
   if (!business.gstConfiguration?.enabled) {
-    throw new AppError("GST is not enabled for this billing company, so there is no GSTR-1 to prepare.", 400);
+    throw new AppError("GST is not turned on for this company. Turn it on and add your GSTIN in Settings → GST & Tax to prepare GSTR-1.", 400);
   }
   const gstin = String(business.gstConfiguration?.gstin || business.gstTaxId || "").toUpperCase();
   const supplierState = policy.normalizeCode(business.gstConfiguration?.stateCode || gstin.slice(0, 2));

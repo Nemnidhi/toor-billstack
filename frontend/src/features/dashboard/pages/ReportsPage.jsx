@@ -47,7 +47,8 @@ const ReportsPage = () => {
   }, [dateRange.from, dateRange.to, refresh]);
   const chartRows = useMemo(() => (data?.monthlySales || []).slice(0, 12).reverse().map(row => ({ month: `${row._id.month}/${String(row._id.year).slice(-2)}`, totalSales: row.totalSales, paidAmount: row.paidAmount })), [data]);
   // GSTR-1 is for GST-registered companies and for people who handle the books.
-  const canSeeGstr1 = Boolean(business?.gstConfiguration?.enabled) && ["owner", "admin", "accountant"].includes(user?.role);
+  // Goldhawk is non-GST; for every other company the tab is shown and explains what is missing if GST is not set up.
+  const canSeeGstr1 = business?.billingEntityCode !== "GOLDHAWK" && ["owner", "admin", "accountant"].includes(user?.role);
   const tabs = [{ key: "overview", title: "Overview" }, ...Object.entries(configurations).filter(([, item]) => showModule(item.module)).map(([key, item]) => ({ key, title: item.title })), { key: "gst", title: "GST details" }, ...(canSeeGstr1 ? [{ key: "gstr1", title: "GSTR-1" }] : [])];
   const activeTab = tabs.some(item => item.key === tab) ? tab : "overview";
   const changePage = (key, page, size) => setQuery(current => ({ ...current, [`${key}Page`]: page, [`${key}Size`]: size }));
