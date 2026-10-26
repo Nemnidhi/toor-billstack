@@ -66,7 +66,7 @@ const placeOfSupply = (gstin, customer, supplierState) => {
         console.log(`  skip   ${invoice.invoiceNumber}: rebuilt tax ₹${snapshot.totalTax} does not match saved tax ₹${savedTax}`);
         continue;
       }
-      const split = snapshot.igst ? `IGST ${snapshot.igst}` : `CGST ${snapshot.cgst} + SGST ${snapshot.sgst + snapshot.utgst}`;
+      const split = !snapshot.totalTax ? `no tax (₹${snapshot.taxableValue} at 0% / ₹0 invoice)` : snapshot.igst ? `IGST ${snapshot.igst}` : `CGST ${snapshot.cgst} + SGST ${snapshot.sgst + snapshot.utgst}`;
       console.log(`  fix    ${invoice.invoiceNumber}: place of supply ${pos}-${policy.states[pos] || "?"}, ${split}${pos === supplierState && !policy.validGstin(gstin) && !customer?.stateCode ? " (client state not saved, own state used)" : ""}`);
       fixed += 1;
       if (APPLY) {

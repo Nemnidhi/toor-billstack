@@ -161,6 +161,7 @@ const buildGstr1 = async ({ businessId, month, from, to }) => {
   const issues = [];
   const rebuilt = [];
   const inferredSac = [];
+  const zeroValue = [];
   const inferredCodes = [];
   const isToor = business.billingEntityCode === "TOOR" || /office on rent/i.test(business.name || "");
   const sacContext = (inv) => ({ isToorEntity: isToor, billingEntityCode: business.billingEntityCode, billingPurpose: inv.crmSourceRef?.billingPurpose || "" });
@@ -223,6 +224,8 @@ const buildGstr1 = async ({ businessId, month, from, to }) => {
     const byRate = new Map();
     snap.lines.forEach((line, index) => {
       const taxable = round2(line.taxableValue);
+      // ₹0 lines (e.g. a ₹0 CRM invoice) carry nothing to report.
+      if (!taxable && !Number(line.igst || 0) && !Number(line.cgst || 0) && !Number(line.sgst || 0)) return;
       const rate = Number(line.rate || 0);
       const classification = String(line.gstClassification || "TAXABLE").toUpperCase();
       const bucket = `${interState ? "inter" : "intra"}${registered ? "Registered" : "Unregistered"}`;
@@ -260,6 +263,7 @@ const buildGstr1 = async ({ businessId, month, from, to }) => {
       totals.sgst = round2(totals.sgst + Number(line.sgst || 0) + Number(line.utgst || 0));
     });
 
+    if (!byRate.size && !Number(inv.grandTotal || 0)) zeroValue.push(number);
     for (const { rate, taxableValue, igst, cgst, sgst } of byRate.values()) {
       const tax = { igst, cgst, sgst };
       const table = registered ? "4A" : interState && invoiceValue > B2CL_LIMIT ? "5" : "7";
@@ -327,6 +331,9 @@ const buildGstr1 = async ({ businessId, month, from, to }) => {
   if (!issued.length) issue("info", "", "No invoices were issued in this period.");
   if (!["month", "quarter"].includes(period.type)) {
     issue("info", "", "GSTR-1 is filed monthly or quarterly (QRMP). Use this period for review or reconciliation, and file month- or quarter-wise.");
+  }
+  if (zeroValue.length) {
+    issue("info", "", `${zeroValue.join(", ")} ${zeroValue.length === 1 ? "is a ₹0 invoice" : "are ₹0 invoices"}, so ${zeroValue.length === 1 ? "it is" : "they are"} only counted in Table 13 (documents issued).`);
   }
   if (inferredSac.length) {
     issue("info", "", `SAC was not saved on some lines of ${[...new Set(inferredSac)].join(", ")}; the code printed on the invoice (${[...new Set(inferredCodes)].join(", ")}) is used.`);
