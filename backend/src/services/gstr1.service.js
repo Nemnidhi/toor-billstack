@@ -61,6 +61,24 @@ const SAC_DESCRIPTIONS = {
 const blankHsnRow = (hsn, rate) => ({ hsn, description: SAC_DESCRIPTIONS[hsn] || "", uqc: "NA", quantity: 0, totalValue: 0, rate, taxableValue: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 });
 const isServiceCode = (hsn) => /^99/.test(String(hsn || ""));
 
+// Builds a gstSnapshot-like object from an invoice that was issued without one.
+const rebuildSnapshot = (inv, gstinForState, supplierState) => {
+  const items = inv.lineItems || [];
+  if (!items.length) return null;
+  const fromGstin = policy.validGstin(gstinForState) ? gstinForState.slice(0, 2) : "";
+  const fromCustomer = String(inv.customerId?.stateCode || "").trim() ? policy.normalizeCode(inv.customerId.stateCode) : "";
+  const pos = fromGstin || (policy.validState(fromCustomer) ? fromCustomer : "") || supplierState;
+  const inter = pos !== supplierState;
+  const lines = items.map((item) => {
+    const rate = Number(item.taxRate || 0);
+    const taxable = round2(item.taxableAmount ?? Number(item.quantity || 0) * Number(item.rate || 0) - Number(item.discount || 0));
+    const tax = round2(item.tax ?? (taxable * rate) / 100);
+    const half = round2(tax / 2);
+    return { taxableValue: taxable, rate, hsnSac: item.hsnSac, gstClassification: item.gstClassification || "TAXABLE", igst: inter ? tax : 0, cgst: inter ? 0 : half, sgst: inter ? 0 : round2(tax - half), utgst: 0 };
+  });
+  return { placeOfSupplyCode: pos, lines, assumedPos: !fromGstin && !policy.validState(fromCustomer) };
+};
+
 const buildGstr1 = async ({ businessId, month }) => {
   const period = parseMonth(month);
   const business = await Business.findById(businessId).lean();
@@ -73,7 +91,7 @@ const buildGstr1 = async ({ businessId, month }) => {
 
   const [invoices, creditNotes] = await Promise.all([
     Invoice.find({ businessId, invoiceDate: { $gte: period.start, $lt: period.end }, status: { $in: ["issued", "cancelled"] } })
-      .populate("customerId", "name gstNumber")
+      .populate("customerId", "name gstNumber stateCode")
       .sort({ invoiceDate: 1, invoiceNumber: 1 })
       .lean(),
     CreditNote.find({ businessId, status: "ISSUED", createdAt: { $gte: period.start, $lt: period.end } })
@@ -83,6 +101,8 @@ const buildGstr1 = async ({ businessId, month }) => {
   ]);
 
   const issues = [];
+  const rebuilt = [];
+  const assumedPos = [];
   const issue = (level, invoiceNumber, message) => issues.push({ level, invoiceNumber, message });
 
   const b2b = [];
@@ -109,15 +129,19 @@ const buildGstr1 = async ({ businessId, month }) => {
   const cancelled = invoices.filter((inv) => inv.status === "cancelled");
 
   for (const inv of issued) {
-    const snap = inv.gstSnapshot;
     const number = inv.invoiceNumber;
     const recipientGstin = String(inv.customerDetails?.gstNumber || "").trim().toUpperCase();
     const currentGstin = String(inv.customerId?.gstNumber || "").trim().toUpperCase();
     const name = inv.customerDetails?.name || inv.customerId?.name || "";
 
+    let snap = inv.gstSnapshot;
     if (!snap || !Array.isArray(snap.lines)) {
-      issue("error", number, "Issued without GST details (place of supply / tax split). It is left out of GSTR-1; cancel and re-issue it, or add it manually.");
-      continue;
+      // Issued while GST was switched off in settings: the invoice still carries tax per line,
+      // so rebuild the split from it instead of dropping the invoice.
+      snap = rebuildSnapshot(inv, recipientGstin || currentGstin, supplierState);
+      if (!snap) { issue("error", number, "Has no line items with tax; add it manually."); continue; }
+      rebuilt.push(number);
+      if (snap.assumedPos) assumedPos.push(number);
     }
     const pos = policy.normalizeCode(snap.placeOfSupplyCode);
     if (!posLabel(pos)) issue("error", number, "Place of supply is missing or invalid.");
@@ -226,6 +250,12 @@ const buildGstr1 = async ({ businessId, month }) => {
   const noteNumbers = creditNotes.map((note) => note.creditNoteNumber).sort(naturalCompare);
   if (noteNumbers.length) docs.push({ nature: "Credit Note", from: noteNumbers[0], to: noteNumbers[noteNumbers.length - 1], total: noteNumbers.length, cancelled: 0 });
 
+  if (rebuilt.length) {
+    issue("warning", "", `${rebuilt.length} invoice${rebuilt.length === 1 ? " was" : "s were"} issued while GST was off in Settings (${rebuilt.join(", ")}). Their tax is taken from the invoice lines; please check them once.`);
+  }
+  if (assumedPos.length) {
+    issue("warning", "", `Client state is not saved for ${assumedPos.join(", ")}, so place of supply is taken as your own state (CGST + SGST). Add the client's state or GSTIN if it is different.`);
+  }
   if (!gstin || !policy.validGstin(gstin)) issue("error", "", "Your GSTIN is missing in Settings → GST & Tax.");
   if (!issued.length) issue("info", "", "No invoices were issued in this month.");
 

@@ -89,3 +89,20 @@ test("SAC default: office and coworking services use 9985", () => {
   assert.equal(resolveItemHsnSac({ productName: "Virtual Office" }), "9985");
   assert.equal(resolveItemHsnSac({ productName: "Coworking", hsnSac: "997212" }), "997212");
 });
+
+test("GSTR-1: invoices issued while GST was off are rebuilt from their lines", async () => {
+  const old = (number, gstin, stateCode) => ({
+    invoiceNumber: number, invoiceDate: new Date("2026-10-05T06:00:00Z"), status: "issued", grandTotal: 11800, gstSnapshot: null,
+    customerDetails: { gstNumber: gstin, name: "Client" }, customerId: { gstNumber: gstin, stateCode },
+    lineItems: [{ productName: "Cabin", hsnSac: "9985", quantity: 1, rate: 10000, taxRate: 18, taxableAmount: 10000, tax: 1800, itemTotal: 11800 }],
+  });
+  stub([old("INV-1", "27AAACR5055K1Z5", ""), old("INV-2", "", "23"), old("INV-3", "", "")]);
+  const data = await buildGstr1({ businessId: "507f1f77bcf86cd799439011", month: "2026-10" });
+  assert.equal(data.b2b.length, 1);
+  assert.equal(data.b2b[0].igst, 1800);
+  assert.equal(data.b2cs[0].taxableValue, 20000);
+  assert.equal(data.b2cs[0].cgst, 1800);
+  assert.equal(data.issues.filter((i) => i.level === "error").length, 0);
+  assert.ok(data.issues.some((i) => /GST was off/.test(i.message) && /INV-1, INV-2, INV-3/.test(i.message)));
+  assert.ok(data.issues.some((i) => /INV-3/.test(i.message) && /place of supply/.test(i.message) && !/INV-2/.test(i.message)));
+});
