@@ -86,6 +86,7 @@ const buildGstr1 = async ({ businessId, month }) => {
   const issue = (level, invoiceNumber, message) => issues.push({ level, invoiceNumber, message });
 
   const b2b = [];
+  const register = []; // every issued invoice, one row per tax rate, with the GSTR-1 table it goes to
   const b2cl = [];
   const b2csMap = new Map();
   const exemp = {
@@ -170,6 +171,8 @@ const buildGstr1 = async ({ businessId, month }) => {
 
     for (const { rate, taxableValue, igst, cgst, sgst } of byRate.values()) {
       const tax = { igst, cgst, sgst };
+      const table = registered ? "4A" : interState && invoiceValue > B2CL_LIMIT ? "5" : "7";
+      register.push({ table, gstin: recipientGstin, name, invoiceNumber: number, invoiceDate: inv.invoiceDate, invoiceValue, pos: posLabel(pos), rate, taxableValue, ...tax });
       if (registered) {
         b2b.push({ gstin: recipientGstin, name, invoiceNumber: number, invoiceDate: inv.invoiceDate, invoiceValue, pos: posLabel(pos), reverseCharge: "N", invoiceType: "Regular B2B", rate, taxableValue, ...tax });
       } else if (interState && invoiceValue > B2CL_LIMIT) {
@@ -232,6 +235,7 @@ const buildGstr1 = async ({ businessId, month }) => {
     gstin,
     businessName: business.name,
     fileName: `${gstin || "GSTIN"}_GSTR1_${period.label}.xlsx`,
+    register: register.sort(sortByNumber),
     b2b: b2b.sort(sortByNumber),
     b2cl: b2cl.sort(sortByNumber),
     b2cs: [...b2csMap.values()].filter((row) => Math.abs(row.taxableValue) > 0.004).sort((a, b) => a.pos.localeCompare(b.pos) || a.rate - b.rate),

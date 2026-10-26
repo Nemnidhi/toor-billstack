@@ -1,11 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const XLSX = require("xlsx");
 const Business = require("../src/models/Business");
 const Invoice = require("../src/models/Invoice");
 const CreditNote = require("../src/models/CreditNote");
 const { buildGstr1, parseMonth, posLabel } = require("../src/services/gstr1.service");
-const { buildGstr1Workbook } = require("../src/utils/gstr1-excel");
 const { buildGstr1Report } = require("../src/utils/gstr1-report");
 const ExcelJS = require("exceljs");
 const { resolveItemHsnSac } = require("../src/utils/pdfInvoice");
@@ -59,27 +57,21 @@ test("GSTR-1: invoices are split into B2B, B2CS and B2CL with HSN and document s
   assert.equal(data.docs[0].cancelled, 1);
   assert.equal(data.issues.filter((i) => i.level === "error").length, 0);
 
-  const workbook = XLSX.read(buildGstr1Workbook(data), { type: "buffer" });
-  assert.equal(workbook.SheetNames[0], "Help Instruction");
-  assert.equal(workbook.SheetNames[1], "b2b,sez,de");
-  assert.equal(workbook.SheetNames.length, 21);
-  const b2b = XLSX.utils.sheet_to_json(workbook.Sheets["b2b,sez,de"], { header: 1, defval: null });
-  assert.equal(b2b[3][0], "GSTIN/UIN of Recipient");
-  assert.equal(b2b[4][0], "27AAACR5055K1Z5");
-  assert.equal(b2b[4][11], 50000);
+  // Every issued invoice is in the register with the GSTR-1 table it belongs to.
+  assert.deepEqual(data.register.map((r) => [r.invoiceNumber, r.table]), [["TOOR/0901", "4A"], ["TOOR/0902", "4A"], ["TOOR/0903", "7"], ["TOOR/0904", "5"]]);
 
-  // Formatted report: summary first, then one sheet per GSTR-1 table, with totals.
   const report = new ExcelJS.Workbook();
   await report.xlsx.load(await buildGstr1Report(data));
-  assert.deepEqual(report.worksheets.map((ws) => ws.name), ["Summary", "4A B2B", "5 B2CL", "7 B2CS", "9B CDNR", "9B CDNUR", "8 Nil-Exempt", "12 HSN B2B", "12 HSN B2C", "13 Documents"]);
-  const sheet = report.getWorksheet("4A B2B");
-  assert.equal(sheet.getCell("B5").value, "GSTIN/UIN of Recipient");
-  assert.equal(sheet.getCell("B6").value, "27AAACR5055K1Z5");
-  assert.equal(sheet.getCell("A8").value, "Total");
-  assert.equal(sheet.getCell("K8").value, 70000);
-  assert.equal(sheet.getCell("L8").value, 9000);
+  // No credit notes / nil-rated supplies this month, so those sheets are left out.
+  assert.deepEqual(report.worksheets.map((ws) => ws.name), ["Summary", "Invoices", "HSN-SAC"]);
+  const invoices = report.getWorksheet("Invoices");
+  assert.equal(invoices.getCell("C5").value, "GSTIN of Recipient");
+  assert.equal(invoices.getCell("C6").value, "27AAACR5055K1Z5");
+  assert.equal(invoices.getCell("A10").value, "Total – 4 invoices");
+  assert.equal(invoices.getCell("J10").value, 232000);
   const summary = report.getWorksheet("Summary");
-  assert.equal(summary.getCell("D12").value, 232000);
+  assert.equal(summary.getCell("B10").value, "Net tax liability");
+  assert.equal(summary.getCell("D10").value, 232000);
   assert.equal(data.hsnB2B[0].description, "Support services");
 });
 

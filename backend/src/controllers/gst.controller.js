@@ -3,7 +3,6 @@ const { reportDateRange } = require("../utils/report-date-range");
 const summarize=(rows)=>rows.reduce((s,row)=>{const g=row.gstSnapshot||row.gstBreakup||{};for(const k of ["cgst","sgst","utgst","igst","taxableValue"])s[k]+=Number(g[k]||0);return s;},{cgst:0,sgst:0,utgst:0,igst:0,taxableValue:0});
 const summary=asyncHandler(async(req,res)=>{const businessId=req.tenant.businessId;const dates=reportDateRange(req.query);const [invoices,purchases]=await Promise.all([Invoice.find({businessId,status:{$ne:"cancelled"},gstSnapshot:{$ne:null},...(Object.keys(dates).length?{invoiceDate:dates}:{})}).select("gstBreakup gstSnapshot"),Purchase.find({businessId,status:{$ne:"cancelled"},gstSnapshot:{$ne:null},...(Object.keys(dates).length?{purchaseDate:dates}:{})}).select("gstBreakup gstSnapshot")]);const sales=summarize(invoices),purchase=summarize(purchases),hsn={};[...invoices,...purchases].forEach(row=>Object.entries(row.gstSnapshot?.hsnSacSummary||row.gstBreakup?.hsnSacSummary||{}).forEach(([k,v])=>hsn[k]=(hsn[k]||0)+Number(v)));res.json({data:{sales:{...sales,totalGst:sales.cgst+sales.sgst+sales.utgst+sales.igst},purchases:{...purchase,totalGst:purchase.cgst+purchase.sgst+purchase.utgst+purchase.igst},hsnSacSummary:hsn}})});
 const { buildGstr1 } = require("../services/gstr1.service");
-const { buildGstr1Workbook } = require("../utils/gstr1-excel");
 const { buildGstr1Report } = require("../utils/gstr1-report");
 
 // GSTR-1 preview for one month (?month=YYYY-MM): section rows, totals and a checklist.
@@ -11,12 +10,11 @@ const gstr1 = asyncHandler(async (req, res) => {
   res.json({ data: await buildGstr1({ businessId: req.tenant.businessId, month: req.query.month }) });
 });
 
-// Formatted GSTR-1 workbook for the CA; ?format=offline gives the plain GST offline-tool upload layout.
+// Formatted GSTR-1 workbook for the CA.
 const gstr1Excel = asyncHandler(async (req, res) => {
   const data = await buildGstr1({ businessId: req.tenant.businessId, month: req.query.month });
-  const offline = req.query.format === "offline";
-  const buffer = offline ? buildGstr1Workbook(data) : await buildGstr1Report(data);
-  const fileName = offline ? data.fileName.replace(/\.xlsx$/, "_offline-tool.xlsx") : data.fileName;
+  const buffer = await buildGstr1Report(data);
+  const { fileName } = data;
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", `attachment; filename="${fileName.replace(/[^A-Za-z0-9_.-]/g, "_")}"`);
   res.send(buffer);
