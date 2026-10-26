@@ -14,7 +14,7 @@ const COLORS = { brand: "1F3A5F", brandSoft: "E8EEF6", header: "24476B", section
 const MONEY = '#,##0.00;[Red]-#,##0.00;"-"';
 const DATE = "dd-mm-yyyy";
 const RATE = '0.##"%"';
-const TABLE_NAMES = { "4A": "B2B", "5": "B2C Large", "7": "B2C Others" };
+const TABLE_NAMES = { "4A": "B2B", "5": "B2C Large", "7": "B2C Others", "8": "Nil / Exempt" };
 
 const thin = { style: "thin", color: { argb: `FF${COLORS.border}` } };
 const borders = { top: thin, left: thin, bottom: thin, right: thin };
@@ -146,7 +146,7 @@ const writeSummary = (workbook, data, exemp) => {
     { table: "7", label: "B2C Others – clients without GSTIN", rows: register.filter((r) => r.table === "7"), count: "invoices" },
   ].map((l) => ({ ...l, records: new Set(l.rows.map((r) => r.invoiceNumber)).size, ...totalsOf(l.rows), sign: 1 }));
   if (notes.length) lines.push({ table: "9B", label: "Credit notes (less)", records: new Set(notes.map((n) => n.noteNumber)).size, ...totalsOf(notes), sign: -1 });
-  if (exempTotal) lines.push({ table: "8", label: "Nil rated / exempt / non-GST", records: exemp.filter((e) => e.nil || e.exempt || e.nonGst).length, taxableValue: exempTotal, igst: 0, cgst: 0, sgst: 0, sign: 0 });
+  if (exempTotal) lines.push({ table: "8", label: "Nil rated / exempt / non-GST", records: new Set(register.filter((r) => r.table === "8").map((r) => r.invoiceNumber)).size, taxableValue: exempTotal, igst: 0, cgst: 0, sgst: 0, sign: 0 });
 
   const net = Object.fromEntries(TAX_KEYS.map((k) => [k, round2(lines.reduce((t, l) => t + (l.sign || 0) * l[k], 0))]));
   const columns = [
@@ -199,7 +199,7 @@ const writeInvoices = (workbook, data) => {
     col("Rate", "rate", "rate", 7), keyed("taxableValue", col("Taxable Value", "taxableValue", "money", 15)),
     keyed("igst", TAX_COLS[0]), keyed("cgst", TAX_COLS[1]), keyed("sgst", TAX_COLS[2]),
   ];
-  const ws = newSheet(workbook, "Invoices", data, "Invoice register – Tables 4A (B2B), 5 (B2C Large) and 7 (B2C Others)", columns.length);
+  const ws = newSheet(workbook, "Invoices", data, "Invoice register – every invoice issued in the period, with its GSTR-1 table", columns.length);
   ws.columns = columns.map((c) => ({ width: c.width }));
   ws.views = [{ state: "frozen", ySplit: 5, showGridLines: false }];
   ws.pageSetup.printTitlesRow = "5:5";

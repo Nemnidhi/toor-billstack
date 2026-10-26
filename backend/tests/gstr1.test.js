@@ -119,12 +119,17 @@ test("GSTR-1: invoices issued while GST was off are rebuilt from their lines", a
   assert.equal(data.hsnB2C[0].hsn, "9985");
 });
 
-test("GSTR-1: ₹0 invoices are left out of the tables and only counted as documents", async () => {
+test("GSTR-1: register lists every issued invoice, including ₹0 and nil-rated ones", async () => {
   const zero = invoice("TOOR/0950", { gstin: "27AAACR5055K1Z5", pos: "27", taxable: 0 });
-  stub([zero, invoice("TOOR/0951", { gstin: "27AAACR5055K1Z5", pos: "27", taxable: 1000 })]);
+  const nil = invoice("TOOR/0952", { pos: "23", taxable: 30000 });
+  nil.gstSnapshot.lines = [{ taxableValue: 30000, rate: 0, hsnSac: "9985", gstClassification: "TAXABLE", igst: 0, cgst: 0, sgst: 0 }];
+  stub([zero, invoice("TOOR/0951", { gstin: "27AAACR5055K1Z5", pos: "27", taxable: 1000 }), nil]);
   const data = await buildGstr1({ businessId: "507f1f77bcf86cd799439011", month: "2026-09" });
-  assert.deepEqual(data.b2b.map((r) => r.invoiceNumber), ["TOOR/0951"]);
-  assert.equal(data.hsnB2B.length, 1);
-  assert.equal(data.docs[0].total, 2);
-  assert.ok(data.issues.some((i) => /TOOR\/0950 is a ₹0 invoice/.test(i.message)));
+  assert.deepEqual(data.register.map((r) => [r.invoiceNumber, r.table]), [["TOOR/0950", "4A"], ["TOOR/0951", "4A"], ["TOOR/0952", "8"]]);
+  assert.equal(new Set(data.register.map((r) => r.invoiceNumber)).size, data.docs[0].total - data.docs[0].cancelled);
+  assert.equal(data.exemp.intraUnregistered.nil, 30000);
+
+  const report = new ExcelJS.Workbook();
+  await report.xlsx.load(await buildGstr1Report(data));
+  assert.equal(report.getWorksheet("Invoices").getCell("A9").value, "Total – 3 invoices");
 });
