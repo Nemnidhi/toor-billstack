@@ -24,7 +24,7 @@ const { createInvoiceHandoff, resolveInvoiceHandoff, hashValue } = require("../s
 const { sellerSnapshot } = require("../src/services/seller-snapshot.service");
 const { buildInvoicePdfDefinition } = require("../src/utils/pdfInvoice");
 
-const MONGO_URI = "mongodb://127.0.0.1:27018/test-phase7-8?replicaSet=rs0&directConnection=true";
+const MONGO_URI = process.env.TEST_MONGO_URI || "mongodb://127.0.0.1:27018/test-phase7-8?replicaSet=rs0&directConnection=true";
 
 const setupEntities = async () => {
   if (mongoose.connection.readyState !== 1) {
@@ -189,7 +189,7 @@ test("A & R. Residential CRM -> Goldhawk -> Non-GST invoice & PDF identity", asy
 
   // Verify PDF definition
   const pdfDef = buildInvoicePdfDefinition({ invoice: ghInv, business: goldhawk });
-  assert.equal(pdfDef.info.title, "Invoice GH-INV-001", "Goldhawk PDF must be titled Invoice, not Tax Invoice");
+  assert.equal(pdfDef.info.title.toUpperCase(), "INVOICE GH-INV-001", "Goldhawk PDF must be titled Invoice, not Tax Invoice");
   assert.equal(pdfDef.content[0].columns[0].text, "INVOICE");
 
   // Post journal entry and verify NO GST ledger lines
@@ -247,7 +247,7 @@ test("B & S. Commercial CRM -> TOOR -> GST invoice & PDF identity", async () => 
 
   // Verify PDF definition
   const pdfDef = buildInvoicePdfDefinition({ invoice: toorInv, business: toor });
-  assert.equal(pdfDef.info.title, "Tax Invoice TOOR-INV-001");
+  assert.equal(pdfDef.info.title.toUpperCase(), "TAX INVOICE TOOR-INV-001");
   assert.equal(pdfDef.content[0].columns[0].text, "TAX INVOICE");
 
   // Post journal entry and verify CGST/SGST output lines

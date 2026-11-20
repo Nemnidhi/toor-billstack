@@ -16,7 +16,8 @@ const { buildInventoryFlags } = require("../services/inventory.service");
 const { generateInvoicePdfBuffer } = require("../utils/pdfInvoice");
 const { buildInvoiceNumber, buildInvoiceTotals } = require("../utils/invoice");
 const { buildGstSnapshot, validateGstin, validateStateCode } = require("../utils/gst");
-const { createCustomerLedgerEntryOnce } = require("../services/ledger.service");
+const { createCustomerLedgerEntryOnce, rebookInvoiceReceivable } = require("../services/ledger.service");
+const { writeAuditLog } = require("../services/audit.service");
 const accountingService = require("../services/accounting.service");
 const { log } = require("../utils/logger");
 const paymentService = require("../services/payment.service");
@@ -510,9 +511,11 @@ const createInvoice = asyncHandler(async (req, res) => {
 
 const updateInvoice = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
+  let editAudit = null;
 
   try {
     await session.withTransaction(async () => {
+      editAudit = null;
       const invoice = await Invoice.findOne({
         _id: req.params.invoiceId,
         businessId: req.tenant.businessId,
@@ -547,6 +550,12 @@ const updateInvoice = asyncHandler(async (req, res) => {
       }
 
       const previousCustomerId = invoice.customerId.toString();
+      const previousState = {
+        customerId: previousCustomerId,
+        invoiceDate: invoice.invoiceDate,
+        grandTotal: invoice.grandTotal,
+        totalTax: invoice.totalTax,
+      };
       const business = await Business.findById(req.tenant.businessId).session(session);
       const customer = await Customer.findOne({
         _id: req.body.customerId || invoice.customerId,
@@ -624,6 +633,44 @@ const updateInvoice = asyncHandler(async (req, res) => {
       });
 
       await invoice.save({ session });
+
+      // An edit of an issued invoice must move the books with it: the customer
+      // ledger and the journal follow the edited amount / customer / date, and
+      // the change is written to the audit log.
+      const editKey = new mongoose.Types.ObjectId().toString();
+      if (invoice.status === "issued") {
+        await rebookInvoiceReceivable({
+          businessId: req.tenant.businessId,
+          invoiceId: invoice._id,
+          targetCustomerId: customer._id,
+          targetAmount: invoice.grandTotal,
+          keyPrefix: `INVOICE:${invoice._id}:EDIT:${editKey}`,
+          createdBy: req.user._id,
+          notes: `Invoice ${invoice.invoiceNumber} edited`,
+          session,
+        });
+        await accountingService.repostEditedInvoiceJournalEntry({
+          invoice,
+          business,
+          previousInvoiceDate: previousState.invoiceDate,
+          editKey,
+          userId: req.user._id,
+          session,
+        });
+      }
+      editAudit = {
+        businessId: req.tenant.businessId,
+        action: "INVOICE_EDITED",
+        entityType: "Invoice",
+        entityId: invoice._id,
+        req,
+        metadata: {
+          invoiceNumber: invoice.invoiceNumber,
+          before: previousState,
+          after: { customerId: customer._id.toString(), invoiceDate: invoice.invoiceDate, grandTotal: invoice.grandTotal, totalTax: invoice.totalTax },
+        },
+      };
+
       await syncCustomerInvoiceHistory({
         customer,
         businessId: req.tenant.businessId,
@@ -645,6 +692,8 @@ const updateInvoice = asyncHandler(async (req, res) => {
         }
       }
     });
+
+    if (editAudit) await writeAuditLog(editAudit);
 
     const invoice = await Invoice.findById(req.params.invoiceId)
       .populate("customerId", "name email phone")
@@ -731,7 +780,9 @@ const cancelInvoice = asyncHandler(async (req, res) => {
         if (invoice.crmSourceRef?.sourceId && Invoice.collection) {
           await Invoice.collection.updateOne({ _id: invoice._id }, { $rename: { crmSourceRef: "voidedCrmSourceRef" } }, { session });
         }
-        await createCustomerLedgerEntryOnce({ businessId: req.tenant.businessId, customerId: invoice.customerId, eventType: "REVERSAL", amount: invoice.grandTotal, direction: "CREDIT", invoiceId: invoice._id, sourceKey: `INVOICE:${invoice._id}:CANCEL`, createdBy: req.user._id, notes: "Invoice cancellation" }, { session });
+        // Credit back what the ledger holds for this invoice (after any edits),
+        // not just today's total.
+        await rebookInvoiceReceivable({ businessId: req.tenant.businessId, invoiceId: invoice._id, targetCustomerId: null, keyPrefix: `INVOICE:${invoice._id}:CANCEL`, singleCreditKey: `INVOICE:${invoice._id}:CANCEL`, createdBy: req.user._id, notes: "Invoice cancellation", session });
         await accountingService.postInvoiceCancellationJournalEntry({ invoice, userId: req.user._id, session });
 
       if (customer) {

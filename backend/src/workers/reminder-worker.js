@@ -18,13 +18,22 @@ const tick = async () => {
   try {
     const businesses = await Business.find({ isDisabled: { $ne: true } }).select("_id").limit(500);
     let processedCount = 0;
+    // Each job for each company runs on its own: a failure in one (say Goldhawk's
+    // reminders) must not stop the others (TOOR's monthly invoices) this tick.
+    const step = async (name, businessId, fn) => {
+      try {
+        const rows = await fn();
+        return Array.isArray(rows) ? rows.length : 0;
+      } catch (error) {
+        log("error", "Worker step failed", { step: name, businessId: String(businessId), error: error.message });
+        return 0;
+      }
+    };
     for (const business of businesses) {
-      const processed = await processDueReminders({ businessId: business._id, limit: batchSize });
-      const workflowDeliveries = await processScheduledWorkflowDeliveries({ businessId: business._id, limit: batchSize });
-      const recurringInvoices = await processDueRecurringProfiles({ businessId: business._id, now: new Date() });
-      processedCount += processed.length;
-      processedCount += workflowDeliveries.length;
-      processedCount += recurringInvoices.length;
+      if (shuttingDown) break;
+      processedCount += await step("reminders", business._id, () => processDueReminders({ businessId: business._id, limit: batchSize }));
+      processedCount += await step("workflow-deliveries", business._id, () => processScheduledWorkflowDeliveries({ businessId: business._id, limit: batchSize }));
+      processedCount += await step("recurring-invoices", business._id, () => processDueRecurringProfiles({ businessId: business._id, now: new Date() }));
     }
     log("info", "Reminder worker tick completed", { processedCount, businesses: businesses.length });
   } catch (error) {

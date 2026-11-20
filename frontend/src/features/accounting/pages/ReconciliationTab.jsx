@@ -61,19 +61,46 @@ const ReconciliationTab = ({ selectedEntity }) => {
     }
   }, [selectedBankAccountId, selectedEntity]);
 
+  // The chosen statement file is sent as base64 (the server reads CSV, XLSX and
+  // XLS). Files over 5 MB are refused here with a clear message instead of
+  // failing on the server.
+  const MAX_STATEMENT_BYTES = 5 * 1024 * 1024;
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0] || null;
+    setError("");
+    setUploadFile(null);
+    setFileBase64("");
+    if (!file) return;
+    if (file.size > MAX_STATEMENT_BYTES) {
+      setError("This file is larger than 5 MB. Export a shorter date range from the bank and import it in parts.");
+      e.target.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      setFileBase64(result.includes(",") ? result.slice(result.indexOf(",") + 1) : result);
+      setUploadFile(file);
+    };
+    reader.onerror = () => setError("Could not read that file. Try saving it again from the bank's site.");
+    reader.readAsDataURL(file);
+  };
+
   const handleImportSubmit = async (e) => {
     e.preventDefault();
-    if (!csvText.trim()) return;
+    if (!csvText.trim() && !fileBase64) return;
     setImporting(true);
     setError("");
     try {
       const res = await importBankStatementRequest({
         entity: selectedEntity,
         bankAccountId: selectedBankAccountId,
-        csvText,
+        ...(fileBase64 ? { fileBase64, fileName: uploadFile?.name || "" } : { csvText }),
       });
       setImportResult(res);
       setCsvText("");
+      setUploadFile(null);
+      setFileBase64("");
       loadReconciliation();
     } catch (err) {
       setError(err.response?.data?.message || err.message || "Statement import failed");
@@ -314,6 +341,8 @@ const ReconciliationTab = ({ selectedEntity }) => {
                 className="w-full font-mono text-xs rounded-xl border border-slate-200 p-3 dark:border-slate-800 dark:bg-slate-800"
               />
 
+              {error && <div className="text-xs text-rose-500 font-medium">{error}</div>}
+
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
@@ -324,7 +353,7 @@ const ReconciliationTab = ({ selectedEntity }) => {
                 </button>
                 <button
                   type="submit"
-                  disabled={importing || (!csvText.trim() && !uploadFile)}
+                  disabled={importing || (!csvText.trim() && !fileBase64)}
                   className="rounded-xl bg-brand-600 px-5 py-2 text-xs font-bold text-white transition hover:bg-brand-700 disabled:opacity-50"
                 >
                   {importing ? "Importing..." : "Parse & Import Statement"}

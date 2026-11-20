@@ -8,7 +8,7 @@
     "start": "node src/server.js",
     "seed": "node src/scripts/seed.js",
     "setup:workspace": "node src/scripts/init-workspace.js",
-    "test": "node tests/run-tests.js && node tests/gstr1.test.js && node tests/module-foundation.test.js && node tests/commercial-module.test.js && node tests/plan-commercialization.test.js && node tests/lockout.test.js && node tests/payment-foundation.test.js && node tests/financial-migration.test.js && node tests/sales-lifecycle.test.js && node tests/gst.test.js && node tests/einvoice.test.js && node tests/communication.test.js && node tests/saas-phase15.test.js && node tests/production-hardening.test.js && node tests/final-fix-pass1.test.js && node tests/final-fix-pass3.test.js && node tests/customer-statement-expenses.test.js && node tests/workflow-foundation.test.js && node tests/invoice-duplicate.test.js && node tests/recurring-manual-service.test.js && node tests/entity-dedupe-and-warning.test.js && node tests/shared-operations.test.js && node tests/self-hosted-release.test.js && node tests/super-admin-product-configuration.test.js && node tests/final-client-ready.test.js && node tests/auth-login-cleanup.test.js && node tests/ledger-append-only-regression.test.js && node tests/product-ux-foundation.test.js && node tests/dashboard-overdue.test.js && node tests/action-workflows.test.js && node tests/report-scalability.test.js && node tests/gst-policy-regression.test.js",
+    "test": "node tests/run-tests.js && node tests/gstr1.test.js && node tests/module-foundation.test.js && node tests/commercial-module.test.js && node tests/plan-commercialization.test.js && node tests/lockout.test.js && node tests/payment-foundation.test.js && node tests/financial-migration.test.js && node tests/sales-lifecycle.test.js && node tests/gst.test.js && node tests/einvoice.test.js && node tests/communication.test.js && node tests/saas-phase15.test.js && node tests/production-hardening.test.js && node tests/final-fix-pass1.test.js && node tests/final-fix-pass3.test.js && node tests/customer-statement-expenses.test.js && node tests/workflow-foundation.test.js && node tests/invoice-duplicate.test.js && node tests/recurring-manual-service.test.js && node tests/entity-dedupe-and-warning.test.js && node tests/shared-operations.test.js && node tests/self-hosted-release.test.js && node tests/super-admin-product-configuration.test.js && node tests/final-client-ready.test.js && node tests/auth-login-cleanup.test.js && node tests/ledger-append-only-regression.test.js && node tests/product-ux-foundation.test.js && node tests/dashboard-overdue.test.js && node tests/action-workflows.test.js && node tests/report-scalability.test.js && node tests/gst-policy-regression.test.js && node --test tests/self-hosted-signup-closed.test.js && node --test tests/audit-fixes.test.js",
     "financial-migration": "node src/scripts/financial-migration.js",
     "worker": "node src/workers/reminder-worker.js",
     "check:env": "node src/scripts/validate-env.js",
@@ -29,17 +29,20 @@
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "exceljs": "^4.4.0",
-    "express": "^4.21.2",
+    "express": "^4.22.1",
     "express-mongo-sanitize": "^2.2.0",
-    "express-rate-limit": "^8.4.0",
+    "express-rate-limit": "^8.7.5",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.19.1",
-    "morgan": "^1.10.1",
-    "multer": "^2.0.2",
-    "nodemailer": "^6.10.1",
+    "mongoose": "^8.24.10",
+    "morgan": "^1.12.1",
+    "multer": "^2.5.0",
+    "nodemailer": "^10.6.1",
     "pdfmake": "^0.2.20",
     "razorpay": "^2.9.6",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "overrides": {
+    "qs": "^6.17.1"
   }
 }

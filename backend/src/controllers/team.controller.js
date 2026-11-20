@@ -8,7 +8,7 @@ const {
   buildSearchFilter,
   buildSort,
 } = require("../utils/queryFeatures");
-const { hashPassword } = require("../services/auth.service");
+const { hashPassword, revokeAllUserRefreshTokens } = require("../services/auth.service");
 
 const userSortFields = ["name", "email", "role", "createdAt", "updatedAt", "lastLoginAt"];
 
@@ -186,6 +186,10 @@ const updateTeamMember = asyncHandler(async (req, res) => {
   }
 
   await teamMember.save();
+  // A new password or a disabled account signs that person out everywhere.
+  if (req.body.password || teamMember.isActive === false) {
+    await revokeAllUserRefreshTokens(teamMember._id);
+  }
 
   res.status(200).json({
     message: "Team member updated successfully",

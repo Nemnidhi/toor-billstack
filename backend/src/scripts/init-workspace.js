@@ -7,14 +7,22 @@ const BusinessSubscription = require("../models/BusinessSubscription");
 const User = require("../models/User");
 const { hashPassword } = require("../services/auth.service");
 const { ensureDefaultAccounts } = require("../services/accounting.service");
+const { redactMongoUri, requireOwnerPassword } = require("./lib/script-guard");
 
 async function initWorkspace() {
-  const mongoUri = process.env.MONGO_URI || "mongodb://127.0.0.1:27018/billstack?replicaSet=rs0";
-  console.log("Connecting to database:", mongoUri);
+  const mongoUri = process.env.MONGO_URI;
+  if (!mongoUri) throw new Error("MONGO_URI is not set.");
+  console.log("Connecting to database:", redactMongoUri(mongoUri));
   await mongoose.connect(mongoUri);
 
   const ownerEmail = (process.env.OWNER_EMAIL || "admin@theofficeonrent.com").trim().toLowerCase();
-  const ownerPassword = process.env.OWNER_PASSWORD || "Admin@1234";
+  // Re-running setup must never reset an existing owner's password. A password is
+  // needed only when the owner account is created for the first time, and then it
+  // must be supplied (no built-in default) - or set RESET_OWNER_PASSWORD=true to
+  // replace it on purpose.
+  const existingOwner = await User.findOne({ email: ownerEmail }).select("_id").lean();
+  const resetOwnerPassword = process.env.RESET_OWNER_PASSWORD === "true";
+  const ownerPassword = !existingOwner || resetOwnerPassword ? requireOwnerPassword() : null;
   const ownerName = process.env.OWNER_NAME || "Akhil Singh Thakur";
 
   console.log("\n--- INITIALIZING BILLSTACK ENTERPRISE WORKSPACE ---");
@@ -108,7 +116,7 @@ async function initWorkspace() {
   }
 
   // 5. Create or Update Owner User
-  const hashedPassword = await hashPassword(ownerPassword);
+  const hashedPassword = ownerPassword ? await hashPassword(ownerPassword) : null;
   let user = await User.findOne({ email: ownerEmail });
   if (!user) {
     user = await User.create({
@@ -123,13 +131,15 @@ async function initWorkspace() {
   } else {
     user.businessId = toor._id;
     user.name = ownerName;
-    user.password = hashedPassword;
     user.role = "owner";
     user.isActive = true;
-    user.failedLoginAttempts = 0;
-    user.lockedUntil = null;
+    if (hashedPassword) {
+      user.password = hashedPassword;
+      user.failedLoginAttempts = 0;
+      user.lockedUntil = null;
+    }
     await user.save();
-    console.log("✓ Updated / Reset Password for Owner User:", ownerEmail);
+    console.log(hashedPassword ? "✓ Updated Owner User and replaced the password:" : "✓ Updated Owner User (password unchanged):", ownerEmail);
   }
 
   // 6. Ensure Multi-Company Membership
@@ -150,7 +160,7 @@ async function initWorkspace() {
   console.log("========================================================");
   console.log("Portal URL:          http://localhost:5174/login (or your production domain)");
   console.log("Admin / Owner Email:", ownerEmail);
-  console.log("Admin Password:     ", ownerPassword);
+  console.log("Admin Password:      " + (ownerPassword ? "(the OWNER_PASSWORD you supplied - not shown)" : "(unchanged)"));
   console.log("Role:                Owner (Full Access to TOOR & Goldhawk)");
   console.log("Branding:            Powered by NEMNIDHI");
   console.log("========================================================\n");

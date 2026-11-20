@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { searchRegex } = require("../utils/search");
 const Business = require("../models/Business");
 const Expense = require("../models/Expense");
 const Supplier = require("../models/Supplier");
@@ -154,8 +155,8 @@ const buildExpenseFilter = ({ businessId, query = {} }) => {
     }
   }
   if (query.search) {
-    const regex = new RegExp(String(query.search).trim(), "i");
-    filter.$or = [{ expenseNumber: regex }, { description: regex }, { vendorName: regex }, { referenceNumber: regex }];
+    const regex = searchRegex(query.search);
+    if (regex) filter.$or = [{ expenseNumber: regex }, { description: regex }, { vendorName: regex }, { referenceNumber: regex }];
   }
   return filter;
 };

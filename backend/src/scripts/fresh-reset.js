@@ -7,14 +7,20 @@ const BusinessSubscription = require("../models/BusinessSubscription");
 const User = require("../models/User");
 const { hashPassword } = require("../services/auth.service");
 const { ensureDefaultAccounts } = require("../services/accounting.service");
+const { redactMongoUri, requireDestructiveConfirmation, requireOwnerPassword } = require("./lib/script-guard");
 
 async function freshReset() {
-  const mongoUri = process.env.MONGO_URI || "mongodb://127.0.0.1:27018/billstack?replicaSet=rs0";
-  console.log("Connecting to database:", mongoUri);
+  const mongoUri = process.env.MONGO_URI;
+  if (!mongoUri) throw new Error("MONGO_URI is not set. This script never guesses which database to wipe.");
+  // Deletes every invoice, payment, customer, account and user except the owner:
+  // only after the operator types the database name back (and, on a live install,
+  // sets BILLSTACK_ALLOW_DESTRUCTIVE_SCRIPTS=true for this run).
+  requireDestructiveConfirmation({ scriptName: "src/scripts/fresh-reset.js", mongoUri });
+  const ownerPassword = requireOwnerPassword();
+  console.log("Connecting to database:", redactMongoUri(mongoUri));
   await mongoose.connect(mongoUri);
 
   const ownerEmail = (process.env.OWNER_EMAIL || "admin@theofficeonrent.com").trim().toLowerCase();
-  const ownerPassword = process.env.OWNER_PASSWORD || "Admin@1234";
   const ownerName = process.env.OWNER_NAME || "Akhil Singh Thakur";
 
   console.log("\n========================================================");
@@ -216,7 +222,7 @@ async function freshReset() {
   console.log("========================================================");
   console.log("Owner Name:     " + ownerName);
   console.log("Login Email:    " + ownerEmail);
-  console.log("Login Password: " + ownerPassword);
+  console.log("Login Password: (the OWNER_PASSWORD you supplied - not shown)");
   console.log("Total Invoices: 0 (Counter reset to 1)");
   console.log("Total Sales:    ₹0.00");
   console.log("Balance Sheet:  Balanced ₹0.00");
@@ -226,6 +232,6 @@ async function freshReset() {
 }
 
 freshReset().catch((err) => {
-  console.error("Fresh Reset Error:", err);
+  console.error("Fresh Reset stopped:", err.message);
   process.exit(1);
 });

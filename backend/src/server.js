@@ -24,17 +24,20 @@ const startServer = async () => {
   }
 };
 
-const shutdown = (signal) => {
+let shuttingDown = false;
+const shutdown = (signal, exitCode = 0) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   log("info", `Received ${signal}. Shutting down BillStack API.`);
 
   if (!server) {
-    process.exit(0);
+    process.exit(exitCode);
     return;
   }
 
   server.close(() => {
     log("info", "HTTP server closed successfully");
-    process.exit(0);
+    process.exit(exitCode);
   });
 
   setTimeout(() => {
@@ -45,8 +48,12 @@ const shutdown = (signal) => {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+// After an uncaught exception the process is in an unknown state (half-done
+// writes, broken sockets). Log it, stop taking requests and exit, so systemd
+// starts a clean copy (the unit must have Restart=always / on-failure).
 process.on("uncaughtException", (error) => {
-  log("error", "Uncaught exception", { message: error.message, stack: error.stack });
+  log("error", "Uncaught exception - restarting", { message: error.message, stack: error.stack });
+  shutdown("uncaughtException", 1);
 });
 process.on("unhandledRejection", (reason) => {
   log("error", "Unhandled promise rejection", {

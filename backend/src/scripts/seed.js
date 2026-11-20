@@ -12,6 +12,11 @@ const { getDeploymentMode, DEPLOYMENT_MODES } = require("../constants/modules");
 const { ensureSelfHostedBusinessProfile } = require("../services/self-hosted-profile.service");
 
 const seed = async () => {
+  // Demo data with demo logins (password123) must never land on a live install.
+  const env = process.env || {};
+  if (env.NODE_ENV === "production" && env.BILLSTACK_ALLOW_DEMO_SEED !== "true") {
+    throw new Error("seed.js creates demo logins and is blocked when NODE_ENV=production.");
+  }
   await connectDB();
 
   const deploymentMode = getDeploymentMode();

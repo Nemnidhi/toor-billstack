@@ -15,6 +15,7 @@ const { generateQuotePdfBuffer } = require("../utils/pdfQuote");
 const { dispatchInvoiceIssuedAutomation } = require("./communication.service");
 const { buildInventoryFlags } = require("./inventory.service");
 const { createCustomerLedgerEntryOnce } = require("./ledger.service");
+const accountingService = require("./accounting.service");
 
 const normalizeLineItems = async ({ businessId, rawItems, session }) => {
   const items = Array.isArray(rawItems) ? rawItems : [];
@@ -293,6 +294,8 @@ const convertQuote = async ({ businessId, userId, id }) => {
       invoice = created;
 
       await createCustomerLedgerEntryOnce({ businessId, customerId: customer._id, eventType: "INVOICE", amount: invoice.grandTotal, direction: "DEBIT", invoiceId: invoice._id, sourceKey: `INVOICE:${invoice._id}:DEBIT`, createdBy: userId }, { session });
+      // A quote converted to an invoice goes into the books like any other issued invoice.
+      await accountingService.postInvoiceJournalEntry({ invoice, business, userId, session });
       business.invoiceNumbering.nextSequence = sequence + 1;
       await business.save({ session });
 

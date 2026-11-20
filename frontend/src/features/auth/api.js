@@ -1,6 +1,12 @@
 import api from "../../api/axios";
 export const previewInvoiceTaxRequest = async payload => (await api.post("/invoices/tax-preview", payload)).data.data;
 
+// Whether this install lets new people create their own workspace (off on the self-hosted install).
+export const signupStatusRequest = async () => {
+  const response = await api.get("/auth/signup-status");
+  return Boolean(response.data?.data?.signupOpen);
+};
+
 export const registerRequest = async (payload) => {
   const response = await api.post("/auth/register", payload);
   return response.data.data;

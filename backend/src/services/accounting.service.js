@@ -158,10 +158,10 @@ const postJournalEntry = async ({
  * TOOR: Posts AR, Revenue, Output GST (CGST/SGST or IGST).
  * Goldhawk: Posts AR, Revenue. GST is strictly ZERO.
  */
-const postInvoiceJournalEntry = async ({ invoice, business, userId, session }) => {
+const buildInvoicePostingLines = async ({ invoice, business, session }) => {
   // Issuing a zero-value invoice does not create a debit, revenue or tax posting.
   // Do not relax postJournalEntry's non-zero and balanced-entry requirements.
-  if (invoice.grandTotal === 0 && (invoice.totalTax ?? 0) === 0) return null;
+  if (invoice.grandTotal === 0 && (invoice.totalTax ?? 0) === 0) return [];
   const accounts = await ensureDefaultAccounts({ businessId: invoice.businessId, session });
 
   const isGoldhawk =
@@ -260,15 +260,117 @@ const postInvoiceJournalEntry = async ({ invoice, business, userId, session }) =
     });
   }
 
+  return lines;
+};
+
+const postInvoiceJournalEntry = async ({ invoice, business, userId, session, sourceKey, description }) => {
+  const lines = await buildInvoicePostingLines({ invoice, business, session });
+  if (!lines.length) return null;
   return postJournalEntry({
     businessId: invoice.businessId,
     userId,
     entryDate: invoice.invoiceDate || new Date(),
     sourceType: "INVOICE",
     sourceId: invoice._id,
-    sourceKey: `INVOICE:${invoice._id}:ISSUED`,
-    description: `Issue Invoice ${invoice.invoiceNumber}`,
+    sourceKey: sourceKey || `INVOICE:${invoice._id}:ISSUED`,
+    description: description || `Issue Invoice ${invoice.invoiceNumber}`,
     lines,
+    session,
+  });
+};
+
+// Invoice ids are 24-character hex ObjectIds; anything else is refused rather than
+// put into a pattern.
+const escapeKey = (value) => {
+  const text = String(value);
+  if (!/^[a-f0-9]{24}$/i.test(text)) throw new AppError("Invalid invoice id", 400);
+  return text;
+};
+
+/**
+ * What the books currently hold for one invoice: every journal entry whose key
+ * starts INVOICE:<id>: (the issue, any edits, a cancellation), netted per account.
+ * Returns { lines: [{accountId, accountCode, accountName, netMinor}], first }.
+ */
+const netInvoicePostings = async ({ invoice, session }) => {
+  const entries = await JournalEntry.find({
+    businessId: invoice.businessId,
+    sourceKey: { $regex: `^INVOICE:${escapeKey(invoice._id)}:` },
+  })
+    .sort({ entryDate: 1, createdAt: 1 })
+    .session(session || null);
+  const byAccount = new Map();
+  for (const entry of entries) {
+    for (const line of entry.lines || []) {
+      const key = String(line.accountId);
+      const row = byAccount.get(key) || { accountId: line.accountId, accountCode: line.accountCode, accountName: line.accountName, netMinor: 0 };
+      row.netMinor += Number(line.debitMinor || 0) - Number(line.creditMinor || 0);
+      byAccount.set(key, row);
+    }
+  }
+  return { lines: [...byAccount.values()].filter((row) => row.netMinor !== 0), first: entries[0] || null, count: entries.length };
+};
+
+const reversalLinesFor = (netLines, label) =>
+  netLines.map((row) => ({
+    accountId: row.accountId,
+    accountCode: row.accountCode,
+    accountName: row.accountName,
+    debitMinor: row.netMinor < 0 ? -row.netMinor : 0,
+    creditMinor: row.netMinor > 0 ? row.netMinor : 0,
+    description: `${label}: ${row.accountName || row.accountCode || "account"}`,
+  }));
+
+const sameNetLines = (netLines, postingLines) => {
+  const want = new Map();
+  for (const line of postingLines) {
+    const key = String(line.accountId);
+    want.set(key, (want.get(key) || 0) + Number(line.debitMinor || 0) - Number(line.creditMinor || 0));
+  }
+  for (const [key, value] of [...want.entries()]) if (value === 0) want.delete(key);
+  if (want.size !== netLines.length) return false;
+  return netLines.every((row) => want.get(String(row.accountId)) === row.netMinor);
+};
+
+/**
+ * An issued invoice with no payments was edited. Bring the books in line with the
+ * invoice as it is now: reverse whatever is posted for it (dated on its old invoice
+ * date) and post the edited invoice (dated on its new date). If nothing was ever
+ * posted, post it now under the normal issue key. No-op when nothing changed.
+ */
+const repostEditedInvoiceJournalEntry = async ({ invoice, business, previousInvoiceDate, editKey, userId, session }) => {
+  const current = await netInvoicePostings({ invoice, session });
+  const newLines = await buildInvoicePostingLines({ invoice, business, session });
+  if (!current.count) {
+    return newLines.length ? postInvoiceJournalEntry({ invoice, business, userId, session }) : null;
+  }
+  const dateUnchanged = new Date(previousInvoiceDate || 0).getTime() === new Date(invoice.invoiceDate || 0).getTime();
+  if (dateUnchanged && sameNetLines(current.lines, newLines)) return null;
+
+  if (current.lines.length) {
+    await postJournalEntry({
+      businessId: invoice.businessId,
+      userId,
+      entryDate: previousInvoiceDate || invoice.invoiceDate || new Date(),
+      sourceType: "REVERSAL",
+      sourceId: invoice._id,
+      sourceKey: `INVOICE:${invoice._id}:EDIT:${editKey}:REVERSE`,
+      description: `Edit Invoice ${invoice.invoiceNumber}: reverse earlier posting`,
+      lines: reversalLinesFor(current.lines, "Edit reversal"),
+      reversalOfEntryId: current.first?._id || null,
+      session,
+    });
+  }
+  if (!newLines.length) return null;
+  return postJournalEntry({
+    businessId: invoice.businessId,
+    userId,
+    entryDate: invoice.invoiceDate || new Date(),
+    sourceType: "INVOICE",
+    sourceId: invoice._id,
+    sourceKey: `INVOICE:${invoice._id}:EDIT:${editKey}:POSTED`,
+    description: `Edit Invoice ${invoice.invoiceNumber}: posting as edited`,
+    lines: newLines,
     session,
   });
 };
@@ -277,22 +379,10 @@ const postInvoiceJournalEntry = async ({ invoice, business, userId, session }) =
  * Automatically post reversing Journal Entry when an invoice is cancelled.
  */
 const postInvoiceCancellationJournalEntry = async ({ invoice, userId, session }) => {
-  const original = await JournalEntry.findOne({
-    businessId: invoice.businessId,
-    sourceKey: `INVOICE:${invoice._id}:ISSUED`,
-  }).session(session);
-
-  if (!original) return null;
-
-  // Reverse every line: debits become credits, credits become debits
-  const reversedLines = original.lines.map((l) => ({
-    accountId: l.accountId,
-    accountCode: l.accountCode,
-    accountName: l.accountName,
-    debitMinor: l.creditMinor,
-    creditMinor: l.debitMinor,
-    description: `Cancellation reversal: ${l.description}`,
-  }));
+  // Reverse the net of everything posted for this invoice (the issue plus any
+  // edits), so an edited invoice is cancelled at the amount the books hold.
+  const current = await netInvoicePostings({ invoice, session });
+  if (!current.lines.length) return null;
 
   return postJournalEntry({
     businessId: invoice.businessId,
@@ -301,9 +391,9 @@ const postInvoiceCancellationJournalEntry = async ({ invoice, userId, session })
     sourceType: "REVERSAL",
     sourceId: invoice._id,
     sourceKey: `INVOICE:${invoice._id}:CANCEL`,
-    description: `Cancel Invoice ${invoice.invoiceNumber} (reversal of ${original.entryNumber})`,
-    lines: reversedLines,
-    reversalOfEntryId: original._id,
+    description: `Cancel Invoice ${invoice.invoiceNumber}${current.first?.entryNumber ? ` (reversal of ${current.first.entryNumber})` : ""}`,
+    lines: reversalLinesFor(current.lines, "Cancellation reversal"),
+    reversalOfEntryId: current.first?._id || null,
     session,
   });
 };
@@ -854,6 +944,9 @@ const getAccountLedger = async ({ businessId, accountId, from, to }) => {
 };
 
 module.exports = {
+  buildInvoicePostingLines,
+  netInvoicePostings,
+  repostEditedInvoiceJournalEntry,
   ensureDefaultAccounts,
   getAccountLedger,
   getTrialBalance,

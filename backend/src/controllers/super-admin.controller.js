@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const bcrypt = require("bcryptjs");
 const Business = require("../models/Business");
 const BusinessSubscription = require("../models/BusinessSubscription");
 const Invoice = require("../models/Invoice");
@@ -57,15 +58,20 @@ const superAdminLogin = asyncHandler(async (req, res) => {
   const password = req.body.password || "";
 
   const expectedEmail = (process.env.SUPER_ADMIN_EMAIL || "").trim().toLowerCase();
+  // Prefer SUPER_ADMIN_PASSWORD_HASH (a bcrypt hash) so the password itself is
+  // never stored in .env; SUPER_ADMIN_PASSWORD (plain) still works for now.
+  const expectedHash = (process.env.SUPER_ADMIN_PASSWORD_HASH || "").trim();
   const expectedPassword = process.env.SUPER_ADMIN_PASSWORD || "";
-  if (!expectedEmail || !expectedPassword) {
+  if (!expectedEmail || (!expectedHash && !expectedPassword)) {
     throw new AppError("Super admin login is not configured", 503);
   }
 
   const hashStr = (s) => crypto.createHash("sha256").update(s).digest();
 
   const emailMatch = crypto.timingSafeEqual(hashStr(email), hashStr(expectedEmail));
-  const passMatch = crypto.timingSafeEqual(hashStr(password), hashStr(expectedPassword));
+  const passMatch = expectedHash
+    ? await bcrypt.compare(password, expectedHash).catch(() => false)
+    : crypto.timingSafeEqual(hashStr(password), hashStr(expectedPassword));
 
   if (!emailMatch || !passMatch) {
     throw new AppError("Invalid super admin credentials", 401);

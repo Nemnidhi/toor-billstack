@@ -17,6 +17,7 @@ const { toMinorUnits, fromMinorUnits } = require("../utils/money");
 const { dispatchInvoiceIssuedAutomation, sendInvoiceMessage } = require("./communication.service");
 const { allocatePayment, createPayment } = require("./payment.service");
 const { createCustomerLedgerEntryOnce } = require("./ledger.service");
+const accountingService = require("./accounting.service");
 const { ensureBusinessSubscription, getPlanEntitlements, isSubscriptionAccessible } = require("../utils/subscription");
 const { buildInventoryFlags } = require("./inventory.service");
 const { resolveOrCreateCatalogService } = require("./service-catalog.service");
@@ -506,6 +507,8 @@ const ingestExternalOrder = async ({ credential, payload }) => {
         { session }
       );
       await createCustomerLedgerEntryOnce({ businessId: credential.businessId, customerId: customer._id, eventType: "INVOICE", amount: invoice.grandTotal, direction: "DEBIT", invoiceId: invoice._id, sourceKey: `INVOICE:${invoice._id}:DEBIT`, createdBy: credential.createdBy }, { session });
+      // Orders that arrive from outside go into the books like any other issued invoice.
+      await accountingService.postInvoiceJournalEntry({ invoice, business, userId: credential.createdBy, session });
       await applyIntegrationInvoiceStock({ business, businessId: credential.businessId, invoiceId: invoice._id, lineItems: totals.lineItems, createdBy: credential.createdBy, session });
       business.invoiceNumbering.nextSequence = sequence + 1;
       await business.save({ session });

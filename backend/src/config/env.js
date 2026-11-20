@@ -35,7 +35,8 @@ const validateEnvironment = ({ throwOnError = true } = {}) => {
     if (!getConfiguredOrigins().length) missing.push("CLIENT_URL or FRONTEND_ORIGINS");
     if (!getBackendOrigins().length) missing.push("API_BASE_URL or BASE_URL");
     if (String(process.env.JWT_SECRET || "").length < 32) warnings.push("JWT_SECRET should be at least 32 characters in production.");
-    if (!process.env.SUPER_ADMIN_JWT_SECRET) warnings.push("SUPER_ADMIN_JWT_SECRET is not set; super admin tokens fall back to JWT_SECRET.");
+    if (!process.env.SUPER_ADMIN_JWT_SECRET) warnings.push("SUPER_ADMIN_JWT_SECRET is not set; super admin tokens use a key derived from JWT_SECRET.");
+    if (process.env.SUPER_ADMIN_PASSWORD && !process.env.SUPER_ADMIN_PASSWORD_HASH) warnings.push("SUPER_ADMIN_PASSWORD is stored in plain text; set SUPER_ADMIN_PASSWORD_HASH (bcrypt) instead and remove it.");
   } else if (!getConfiguredOrigins().length) {
     warnings.push("No frontend origin configured; localhost development origins will be used.");
   }

@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { searchRegex } = require("../utils/search");
 
 const Appointment = require("../models/Appointment");
 const Business = require("../models/Business");
@@ -20,6 +21,7 @@ const { log } = require("../utils/logger");
 const { buildInventoryFlags } = require("./inventory.service");
 const { writeAuditLog } = require("./audit.service");
 const { createCustomerLedgerEntryOnce } = require("./ledger.service");
+const accountingService = require("./accounting.service");
 const { dispatchInvoiceIssuedAutomation, scheduleWorkflowMessage } = require("./communication.service");
 const { cleanText, resolveOrCreateCatalogService } = require("./service-catalog.service");
 
@@ -265,6 +267,8 @@ const createInvoiceFromWorkflow = async ({ business, customer, lineItems, source
     session,
   });
   await createCustomerLedgerEntryOnce({ businessId: business._id, customerId: customer._id, eventType: "INVOICE", amount: invoice.grandTotal, direction: "DEBIT", invoiceId: invoice._id, sourceKey: `INVOICE:${invoice._id}:DEBIT`, createdBy: userId }, { session });
+  // Recurring and order invoices go into the books like any other issued invoice.
+  await accountingService.postInvoiceJournalEntry({ invoice, business, userId, session });
   await business.save({ session });
   return invoice;
 };
@@ -326,7 +330,7 @@ const listOrders = ({ businessId, query = {} }) => {
   if (query.status) filter.status = String(query.status).toUpperCase();
   if (query.fulfilmentStatus) filter.fulfilmentStatus = String(query.fulfilmentStatus).toUpperCase();
   if (query.customerId) filter.customerId = query.customerId;
-  if (query.search) filter.orderNumber = { $regex: String(query.search), $options: "i" };
+  if (searchRegex(query.search)) filter.orderNumber = searchRegex(query.search);
   return Order.find(filter).populate("customerId", "name email phone").sort("-orderDate");
 };
 
@@ -545,16 +549,29 @@ const updateTask = async ({ businessId, userId, id, payload }) => {
   return task;
 };
 
-const addInterval = (date, frequency, interval = 1) => {
+// Month arithmetic is done on the India calendar date (whatever time of day the
+// date was stored at), and a short month clamps to its last day instead of
+// spilling over: 31 Jan + 1 month = 28/29 Feb, not 3 Mar. anchorDate (the
+// profile's start date) keeps the billing day: 31 Jan -> 28 Feb -> 31 Mar.
+const BILLING_OFFSET_MS = 330 * 60 * 1000;
+const billingDayOf = (date) => (date ? new Date(new Date(date).getTime() + BILLING_OFFSET_MS).getUTCDate() : 0);
+const addMonthsKeepingDay = (date, months, anchorDay = 0) => {
+  const local = new Date(new Date(date).getTime() + BILLING_OFFSET_MS);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth() + months;
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const day = Math.min(anchorDay || local.getUTCDate(), lastDay);
+  const shifted = Date.UTC(year, month, day, local.getUTCHours(), local.getUTCMinutes(), local.getUTCSeconds(), local.getUTCMilliseconds());
+  return new Date(shifted - BILLING_OFFSET_MS);
+};
+
+const addInterval = (date, frequency, interval = 1, anchorDate = null) => {
   if (!RECURRING_FREQUENCIES.includes(frequency)) throw new AppError("Invalid recurring billing frequency", 400);
   if (!Number.isInteger(Number(interval)) || Number(interval) <= 0) throw new AppError("Recurring interval must be a positive integer", 400);
-  const next = new Date(date);
-  if (frequency === "WEEKLY") next.setDate(next.getDate() + 7 * interval);
-  if (frequency === "MONTHLY") next.setMonth(next.getMonth() + interval);
-  if (frequency === "QUARTERLY") next.setMonth(next.getMonth() + 3 * interval);
-  if (frequency === "HALF_YEARLY") next.setMonth(next.getMonth() + 6 * interval);
-  if (frequency === "YEARLY") next.setFullYear(next.getFullYear() + interval);
-  return next;
+  const steps = Number(interval);
+  if (frequency === "WEEKLY") return new Date(new Date(date).getTime() + 7 * steps * 24 * 60 * 60 * 1000);
+  const months = { MONTHLY: 1, QUARTERLY: 3, HALF_YEARLY: 6, YEARLY: 12 }[frequency] * steps;
+  return addMonthsKeepingDay(date, months, billingDayOf(anchorDate));
 };
 
 const occurrenceKey = (profile, date = profile.nextBillingDate) => `${profile._id}:${new Date(date).toISOString().slice(0, 10)}`;
@@ -670,7 +687,15 @@ const generateRecurringInvoice = async ({ businessId, userId, id, runDate = new 
       const key = occurrenceKey(profile);
       const existing = await Invoice.findOne({ businessId, recurringOccurrenceKey: key }).session(session);
       if (existing) {
+        // This occurrence was billed already (e.g. the run stopped before the
+        // profile was saved). Move the profile on, or it stays due for ever.
         invoice = existing;
+        if (!profile.generatedInvoices.some((row) => row.occurrenceKey === key)) {
+          profile.generatedInvoices.push({ invoiceId: existing._id, occurrenceKey: key, generatedAt: runDate });
+        }
+        profile.nextBillingDate = addInterval(profile.nextBillingDate, profile.frequency, profile.interval, profile.startDate);
+        if (profile.endDate && profile.nextBillingDate > profile.endDate) profile.status = "COMPLETED";
+        await profile.save({ session });
         return;
       }
       const [business, customer] = await Promise.all([
@@ -687,7 +712,7 @@ const generateRecurringInvoice = async ({ businessId, userId, id, runDate = new 
       });
       profile.generatedInvoices.push({ invoiceId: invoice._id, occurrenceKey: key, generatedAt: runDate });
       profile.lastGeneratedAt = runDate;
-      profile.nextBillingDate = addInterval(profile.nextBillingDate, profile.frequency, profile.interval);
+      profile.nextBillingDate = addInterval(profile.nextBillingDate, profile.frequency, profile.interval, profile.startDate);
       if (profile.endDate && profile.nextBillingDate > profile.endDate) profile.status = "COMPLETED";
       await profile.save({ session });
     });
@@ -703,10 +728,35 @@ const generateRecurringInvoice = async ({ businessId, userId, id, runDate = new 
 };
 
 const processDueRecurringProfiles = async ({ businessId, userId, now = new Date() }) => {
+  // A profile whose end date has passed is finished, not an error.
+  await RecurringBillingProfile.updateMany(
+    { businessId, status: "ACTIVE", endDate: { $ne: null }, $expr: { $gt: ["$nextBillingDate", "$endDate"] } },
+    { $set: { status: "COMPLETED" } }
+  );
   const profiles = await RecurringBillingProfile.find({ businessId, status: "ACTIVE", autoGenerateInvoice: true, nextBillingDate: { $lte: now } }).sort("nextBillingDate").limit(25);
   const results = [];
   for (const profile of profiles) {
-    results.push(await generateRecurringInvoice({ businessId, userId: userId || profile.createdBy, id: profile._id, runDate: now }));
+    // One profile that cannot be billed must never hold up the others.
+    try {
+      results.push(await generateRecurringInvoice({ businessId, userId: userId || profile.createdBy, id: profile._id, runDate: now }));
+    } catch (error) {
+      const permanent = error instanceof AppError && error.statusCode >= 400 && error.statusCode < 500;
+      log(permanent ? "warn" : "error", "Recurring invoice could not be generated", { profileId: profile._id.toString(), error: error.message, paused: permanent });
+      if (permanent) {
+        // e.g. the customer was deleted or a GST number is invalid: retrying every
+        // 30 seconds cannot fix it. Pause the profile and record why, so a person
+        // can correct it and switch it back on.
+        await RecurringBillingProfile.updateOne({ _id: profile._id, businessId, status: "ACTIVE" }, { $set: { status: "PAUSED" } });
+        await writeAuditLog({
+          businessId,
+          actor: { type: "SYSTEM" },
+          action: "RECURRING_PROFILE_PAUSED",
+          entityType: "RecurringBillingProfile",
+          entityId: profile._id,
+          metadata: { name: profile.name, reason: error.message, nextBillingDate: profile.nextBillingDate },
+        });
+      }
+    }
   }
   return results;
 };

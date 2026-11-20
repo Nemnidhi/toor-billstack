@@ -25,7 +25,7 @@ const { createInvoiceHandoff, resolveInvoiceHandoff, hashValue } = require('../s
 const { sellerSnapshot } = require('../src/services/seller-snapshot.service');
 const { buildInvoicePdfDefinition } = require('../src/utils/pdfInvoice');
 
-const MONGO_URI = 'mongodb://127.0.0.1:27018/test-phase9-hardening?replicaSet=rs0&directConnection=true';
+const MONGO_URI = process.env.TEST_MONGO_URI || 'mongodb://127.0.0.1:27018/test-phase9-hardening?replicaSet=rs0&directConnection=true';
 
 const setupEnv = async () => {
   if (mongoose.connection.readyState !== 1) {

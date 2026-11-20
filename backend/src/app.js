@@ -42,12 +42,16 @@ const { notFound, errorHandler } = require("./middlewares/error.middleware");
 
 const app = express();
 app.set("trust proxy", 1);
-const jsonParser = express.json({
-  limit: "1mb",
-  verify: (req, _res, buf) => {
-    req.rawBody = buf.toString("utf8");
-  },
-});
+// The exact bytes are kept only where a signature is checked against them (the
+// WhatsApp status webhook), not for every request.
+const keepRawBodyForWebhooks = (req, _res, buf) => {
+  if (req.originalUrl.includes("/webhooks/")) req.rawBody = buf.toString("utf8");
+};
+const jsonParser = express.json({ limit: "1mb", verify: keepRawBodyForWebhooks });
+// A bank statement file arrives as base64 inside JSON; the page allows files up
+// to 5 MB, which is about 6.7 MB once encoded.
+const statementImportPath = "/api/accounting/bank-statements/import";
+const statementJsonParser = express.json({ limit: "8mb" });
 const corsMiddleware = cors(buildCorsOptions());
 
 morgan.token("requestId", (req) => req.requestId);
@@ -73,6 +77,9 @@ app.use(requestContext);
 app.use((req, res, next) => {
   if (req.originalUrl.startsWith("/api/billing/webhook")) {
     return next();
+  }
+  if (req.path === statementImportPath) {
+    return statementJsonParser(req, res, next);
   }
 
   return jsonParser(req, res, next);

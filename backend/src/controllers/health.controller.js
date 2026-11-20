@@ -4,7 +4,21 @@ const { validateEnvironment } = require("../config/env");
 const { getWhatsAppProviderStatus } = require("../services/whatsapp-provider.service");
 const { getMongoTransactionReadiness } = require("../utils/mongo-readiness");
 
-const getHealth = asyncHandler(async (_req, res) => {
+// Anyone on the internet can call these. Outsiders get only up / ready; the
+// details (configuration warnings, which providers are set up, memory) are for
+// checks run on the server itself (curl 127.0.0.1:<port>) or callers that send
+// the HEALTH_DETAILS_TOKEN.
+const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+const canSeeDetails = (req) => {
+  const token = process.env.HEALTH_DETAILS_TOKEN || "";
+  if (token && req.get("x-health-token") === token) return true;
+  return LOOPBACK.has(req.ip) && LOOPBACK.has(req.socket?.remoteAddress || "");
+};
+
+const getHealth = asyncHandler(async (req, res) => {
+  if (!canSeeDetails(req)) {
+    return res.status(200).json({ status: "ok", service: "billstack-backend", timestamp: new Date().toISOString() });
+  }
   const memory = process.memoryUsage();
 
   res.status(200).json({
@@ -22,11 +36,14 @@ const getHealth = asyncHandler(async (_req, res) => {
   });
 });
 
-const getReadiness = asyncHandler(async (_req, res) => {
+const getReadiness = asyncHandler(async (req, res) => {
   const dbReady = mongoose.connection.readyState === 1;
   const env = validateEnvironment({ throwOnError: false });
-  const transactionReadiness = await getMongoTransactionReadiness();
   const ready = dbReady && env.ok;
+  if (!canSeeDetails(req)) {
+    return res.status(ready ? 200 : 503).json({ status: ready ? "ready" : "not_ready", service: "billstack-backend", timestamp: new Date().toISOString() });
+  }
+  const transactionReadiness = await getMongoTransactionReadiness();
 
   res.status(ready ? 200 : 503).json({
     status: ready ? "ready" : "not_ready",
