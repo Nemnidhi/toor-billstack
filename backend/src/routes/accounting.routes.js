@@ -29,6 +29,7 @@ const {
 const tds = require("../controllers/tds.controller");
 const controls = require("../controllers/controls.controller");
 const yearEnd = require("../controllers/year-end.controller");
+const payroll = require("../controllers/payroll.controller");
 const authMiddleware = require("../middlewares/auth.middleware");
 const { permit } = require("../middlewares/role.middleware");
 const { authorizeAccountingReport } = require("../middlewares/accounting-access.middleware");
@@ -104,6 +105,19 @@ router.get("/year-end/schedule-iii", authorizeAccountingReport, yearEnd.schedule
 router.get("/year-end/msme", authorizeAccountingReport, yearEnd.msme);
 router.get("/year-end/gstr9", authorizeAccountingReport, yearEnd.gstr9);
 router.get("/year-end/tally", authorizeAccountingReport, yearEnd.tally);
+
+// Payroll: salary sheets finalised in the CRM, posted, paid and their dues; staff advances
+router.get("/payroll/runs", authorizeAccountingReport, payroll.listRuns);
+router.get("/payroll/runs/:id", authorizeAccountingReport, payroll.getRun);
+router.get("/payroll/runs/:id/register", authorizeAccountingReport, payroll.register);
+router.put("/payroll/runs/:id/deduction-map", authorizeAccountingReport, payroll.setDeductionMap);
+router.post("/payroll/runs/:id/post", authorizeAccountingReport, payroll.postRun);
+router.post("/payroll/runs/:id/unpost", authorizeAccountingReport, payroll.unpostRun);
+router.post("/payroll/runs/:id/pay", authorizeAccountingReport, payroll.payRun);
+router.post("/payroll/runs/:id/dues", authorizeAccountingReport, payroll.payDues);
+router.get("/payroll/advances", authorizeAccountingReport, payroll.advances);
+router.post("/payroll/advances", authorizeAccountingReport, payroll.giveAdvance);
+router.post("/payroll/advances/:id/cancel", authorizeAccountingReport, payroll.cancelAdvance);
 router.get("/goldhawk-watch", permit("owner", "admin", "accountant"), controls.getGoldhawkWatch);
 
 module.exports = router;

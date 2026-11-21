@@ -39,6 +39,7 @@ import ReconciliationTab from "./ReconciliationTab";
 import TdsTab from "./TdsTab";
 import ControlsTab, { GoldhawkBanner } from "./ControlsTab";
 import YearEndTab from "./YearEndTab";
+import PayrollTab from "./PayrollTab";
 import { ShieldCheck } from "lucide-react";
 
 const AccountingReportsPage = () => {
@@ -360,6 +361,7 @@ const AccountingReportsPage = () => {
           { key: "reconciliation", label: "Bank Reconciliation", icon: CheckCircle2 },
           { key: "tds", label: "TDS", icon: Wallet },
           { key: "controls", label: "Lock & edit log", icon: ShieldCheck },
+          { key: "payroll", label: "Payroll", icon: Wallet },
           { key: "year_end", label: "Year end", icon: Scale },
           { key: "export", label: "Accountant Export Pack", icon: Download },
         ].map((tab) => {
@@ -940,6 +942,10 @@ const AccountingReportsPage = () => {
 
       {activeTab === "controls" && (
         <ControlsTab selectedEntity={selectedEntity} role={user?.role} />
+      )}
+
+      {activeTab === "payroll" && (
+        <PayrollTab selectedEntity={selectedEntity} />
       )}
 
       {activeTab === "year_end" && (

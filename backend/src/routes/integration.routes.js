@@ -20,6 +20,8 @@ const router = express.Router();
 router.post("/orders", integrationAuthMiddleware, ingestOrder);
 router.post("/customers/upsert", integrationAuthMiddleware, upsertCustomer);
 router.post("/handoffs/invoice", integrationAuthMiddleware, requestInvoiceHandoff);
+router.post("/payroll/runs", integrationAuthMiddleware, require("../controllers/payroll.controller").receiveRun);
+router.get("/payroll/runs/:runId", integrationAuthMiddleware, require("../controllers/payroll.controller").runStatusForCrm);
 router.get("/handoffs/invoice/:token", authMiddleware, tenantMiddleware, permit("owner", "admin", "staff", "accountant"), consumeInvoiceHandoff);
 
 router.use(authMiddleware, tenantMiddleware, permit("owner", "admin"));

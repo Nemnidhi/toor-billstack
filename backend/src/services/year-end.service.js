@@ -51,12 +51,12 @@ const BS_HEADS = {
   ST_BORROWINGS: { side: "EL", group: "Current liabilities", label: "Short-term borrowings (bank overdraft)" },
   TRADE_PAYABLES_MSE: { side: "EL", group: "Current liabilities", label: "Trade payables: micro and small enterprises" },
   TRADE_PAYABLES: { side: "EL", group: "Current liabilities", label: "Trade payables: others" },
-  OTHER_CL: { side: "EL", group: "Current liabilities", label: "Other current liabilities (advances, GST, TDS)" },
+  OTHER_CL: { side: "EL", group: "Current liabilities", label: "Other current liabilities (advances, GST, TDS, salaries and payroll dues)" },
   PPE: { side: "A", group: "Non-current assets", label: "Property, plant and equipment (net block)" },
   LT_LOANS: { side: "A", group: "Non-current assets", label: "Long-term loans and advances (security deposits given)" },
   TRADE_RECEIVABLES: { side: "A", group: "Current assets", label: "Trade receivables" },
   CASH: { side: "A", group: "Current assets", label: "Cash and cash equivalents" },
-  ST_LOANS: { side: "A", group: "Current assets", label: "Short-term loans and advances (supplier advances, TDS, GST credit)" },
+  ST_LOANS: { side: "A", group: "Current assets", label: "Short-term loans and advances (supplier and staff advances, TDS, GST credit)" },
   OTHER_CA: { side: "A", group: "Current assets", label: "Other current assets" },
 };
 const PL_HEADS = {
@@ -79,13 +79,13 @@ const bsHeadOf = (code, type) => {
   if (code === "1210") return "LT_LOANS";
   if (code === "1100") return "TRADE_RECEIVABLES";
   if (/^10\d\d/.test(code)) return "CASH";
-  if (code === "1150" || code === "1410" || /^13\d\d/.test(code)) return "ST_LOANS";
+  if (code === "1150" || code === "1160" || code === "1410" || /^13\d\d/.test(code)) return "ST_LOANS";
   return "OTHER_CA";
 };
 const plHeadOf = (code, type) => {
   if (type === "INCOME") return ["4010", "4020", "4030", "4090"].includes(code) ? "REVENUE" : "OTHER_INCOME";
   if (code === "5100") return "PURCHASES";
-  if (code === "5050") return "EMPLOYEE";
+  if (code === "5050" || code === "5055") return "EMPLOYEE";
   if (code === "5180") return "FINANCE";
   if (code === "5200") return "DEPRECIATION";
   return "OTHER_EXP";

@@ -150,3 +150,16 @@ export const getScheduleIIIRequest = async (params = {}) => (await api.get("/acc
 export const getMsmeReportRequest = async (params = {}) => (await api.get("/accounting/year-end/msme", { params })).data.data;
 export const getGstr9Request = async (params = {}) => (await api.get("/accounting/year-end/gstr9", { params })).data.data;
 export const downloadTallyXml = async (params = {}) => (await api.get("/accounting/year-end/tally", { params, responseType: "blob" })).data;
+
+// Payroll: salary sheets finalised in the CRM, posted, paid and their dues; staff advances
+export const getPayrollRunsRequest = async (params = {}) => (await api.get("/accounting/payroll/runs", { params })).data.data;
+export const getPayrollRunRequest = async (id, params = {}) => (await api.get(`/accounting/payroll/runs/${id}`, { params })).data.data;
+export const setPayrollDeductionMapRequest = async (id, map, params = {}) => (await api.put(`/accounting/payroll/runs/${id}/deduction-map`, { map }, { params })).data.data;
+export const postPayrollRunRequest = async (id, params = {}) => (await api.post(`/accounting/payroll/runs/${id}/post`, {}, { params })).data.data;
+export const unpostPayrollRunRequest = async (id, params = {}) => (await api.post(`/accounting/payroll/runs/${id}/unpost`, {}, { params })).data.data;
+export const payPayrollRunRequest = async (id, payload, params = {}) => (await api.post(`/accounting/payroll/runs/${id}/pay`, payload, { params })).data.data;
+export const payPayrollDuesRequest = async (id, payload, params = {}) => (await api.post(`/accounting/payroll/runs/${id}/dues`, payload, { params })).data.data;
+export const downloadPayrollRegister = async (id, params = {}) => (await api.get(`/accounting/payroll/runs/${id}/register`, { params, responseType: "blob" })).data;
+export const getStaffAdvancesRequest = async (params = {}) => (await api.get("/accounting/payroll/advances", { params })).data.data;
+export const giveStaffAdvanceRequest = async (payload, params = {}) => (await api.post("/accounting/payroll/advances", payload, { params })).data.data;
+export const cancelStaffAdvanceRequest = async (id, params = {}) => (await api.post(`/accounting/payroll/advances/${id}/cancel`, {}, { params })).data.data;

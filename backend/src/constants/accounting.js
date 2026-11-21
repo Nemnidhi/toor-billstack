@@ -4,6 +4,7 @@
   { code: "1020", name: "Bank Account", type: "ASSET", normalBalance: "DEBIT", description: "Primary operational bank account" },
   { code: "1100", name: "Accounts Receivable", type: "ASSET", normalBalance: "DEBIT", description: "Trade debtors / customer receivable balances" },
   { code: "1150", name: "Advances to Suppliers", type: "ASSET", normalBalance: "DEBIT", description: "Money paid to suppliers / landlords not yet set against a bill" },
+  { code: "1160", name: "Staff Advances & Loans", type: "ASSET", normalBalance: "DEBIT", description: "Salary advances and loans to staff, recovered from their pay" },
   { code: "1210", name: "Security Deposits Given", type: "ASSET", normalBalance: "DEBIT", description: "Rent and other deposits paid to landlords / others, refundable" },
   { code: "1510", name: "Fixed Assets (Gross Block)", type: "ASSET", normalBalance: "DEBIT", description: "Furniture, fit-out, computers, equipment at cost (fixed asset register)" },
   { code: "1590", name: "Accumulated Depreciation", type: "ASSET", normalBalance: "CREDIT", description: "Depreciation charged to date on fixed assets (reduces the gross block)" },
@@ -23,6 +24,12 @@
   { code: "2250", name: "SGST Payable - Reverse Charge", type: "LIABILITY", normalBalance: "CREDIT", description: "SGST we owe on supplies taken under reverse charge (paid in cash, GSTR-3B 3.1(d))" },
   { code: "2260", name: "IGST Payable - Reverse Charge", type: "LIABILITY", normalBalance: "CREDIT", description: "IGST we owe on supplies taken under reverse charge (paid in cash, GSTR-3B 3.1(d))" },
 
+  { code: "2315", name: "TDS Payable - Salaries (s.192)", type: "LIABILITY", normalBalance: "CREDIT", description: "Income tax deducted from salaries, deposited by challan and filed in Form 24Q" },
+  { code: "2320", name: "Salaries Payable", type: "LIABILITY", normalBalance: "CREDIT", description: "Net salaries for a finalised month not yet paid to staff" },
+  { code: "2330", name: "PF Payable", type: "LIABILITY", normalBalance: "CREDIT", description: "Provident fund deducted from salaries, to be deposited with EPFO" },
+  { code: "2340", name: "ESI Payable", type: "LIABILITY", normalBalance: "CREDIT", description: "ESI deducted from salaries, to be deposited with ESIC" },
+  { code: "2350", name: "Professional Tax Payable", type: "LIABILITY", normalBalance: "CREDIT", description: "Professional tax deducted from salaries, to be paid to the state" },
+  { code: "2360", name: "Other Payroll Deductions Payable", type: "LIABILITY", normalBalance: "CREDIT", description: "Other amounts held back from salaries and owed to someone else (insurance, welfare fund)" },
   { code: "2410", name: "Security Deposits Received", type: "LIABILITY", normalBalance: "CREDIT", description: "Refundable deposits taken from tenants / members" },
 
   // Equity (3000 - 3999)
@@ -41,6 +48,7 @@
   { code: "5030", name: "Electricity & Utilities", type: "EXPENSE", normalBalance: "DEBIT", description: "Electricity, water, DG and other utilities" },
   { code: "5040", name: "Internet & Communication", type: "EXPENSE", normalBalance: "DEBIT", description: "Internet, phone and communication" },
   { code: "5050", name: "Salaries & Wages", type: "EXPENSE", normalBalance: "DEBIT", description: "Staff salaries, wages and allowances" },
+  { code: "5055", name: "Staff Incentives & Bonus", type: "EXPENSE", normalBalance: "DEBIT", description: "KPI incentives, bonus and other additions to salary" },
   { code: "5060", name: "Travel & Conveyance", type: "EXPENSE", normalBalance: "DEBIT", description: "Travel, fuel and local conveyance" },
   { code: "5070", name: "Marketing & Advertising", type: "EXPENSE", normalBalance: "DEBIT", description: "Ads, listings, promotions and marketing" },
   { code: "5080", name: "Office Supplies & Pantry", type: "EXPENSE", normalBalance: "DEBIT", description: "Stationery, consumables and pantry" },
