@@ -34,6 +34,12 @@ const journalLineSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    // Property / centre the line belongs to; blank = not assigned.
+    centre: {
+      type: String,
+      trim: true,
+      default: "",
+    },
   },
   { _id: false }
 );
@@ -61,7 +67,7 @@ const journalEntrySchema = new mongoose.Schema(
     },
     sourceType: {
       type: String,
-      enum: ["INVOICE", "PAYMENT", "PAYMENT_ALLOCATION", "EXPENSE", "MANUAL", "REVERSAL", "OPENING_BALANCE"],
+      enum: ["INVOICE", "PAYMENT", "PAYMENT_ALLOCATION", "EXPENSE", "PURCHASE", "CREDIT_NOTE", "SALES_RETURN", "TDS_CHALLAN", "DEPOSIT", "FIXED_ASSET", "DEPRECIATION", "MANUAL", "REVERSAL", "OPENING_BALANCE"],
       required: true,
       immutable: true,
     },
@@ -139,5 +145,8 @@ journalEntrySchema.index({ businessId: 1, "lines.accountId": 1, entryDate: 1 });
 journalEntrySchema.pre(["findOneAndUpdate", "updateOne", "updateMany", "deleteOne", "deleteMany"], () => {
   throw new Error("Journal entries are immutable financial records. To void an entry, post a reversing entry.");
 });
+
+// every change is kept in the edit log (books audit trail)
+journalEntrySchema.plugin(require("../utils/edit-log.plugin"), { model: "JournalEntry", businessKey: "businessId" });
 
 module.exports = mongoose.model("JournalEntry", journalEntrySchema);

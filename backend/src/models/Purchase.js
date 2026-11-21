@@ -74,6 +74,11 @@ const purchaseSchema = new mongoose.Schema(
       enum: ["paid", "partial", "unpaid"],
       default: "unpaid",
     },
+    // The supplier's own bill number and date (for GSTR-2B / IMS matching).
+    supplierInvoiceNumber: { type: String, trim: true, maxlength: 40, default: "" },
+    supplierInvoiceDate: { type: Date, default: null },
+    // Property / centre this belongs to (profit by location). Free text, blank = not assigned.
+    centre: { type: String, trim: true, maxlength: 80, default: "" },
     purchaseDate: {
       type: Date,
       required: true,
@@ -89,6 +94,11 @@ const purchaseSchema = new mongoose.Schema(
   }
 );
 
+purchaseSchema.add({ attachments: { type: [require("./documentAttachment.schema")], default: [] } });
+
 purchaseSchema.index({ businessId: 1, supplierId: 1, purchaseDate: -1 });
+
+// every change is kept in the edit log (books audit trail)
+purchaseSchema.plugin(require("../utils/edit-log.plugin"), { model: "Purchase", businessKey: "businessId" });
 
 module.exports = mongoose.model("Purchase", purchaseSchema);

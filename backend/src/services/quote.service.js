@@ -8,7 +8,7 @@ const Quote = require("../models/Quote");
 const StockMovement = require("../models/StockMovement");
 const AppError = require("../utils/appError");
 const { buildGstSnapshot, validateGstin, validateStateCode } = require("../utils/gst");
-const { buildInvoiceNumber, buildInvoiceTotals } = require("../utils/invoice");
+const { buildInvoiceNumber, buildInvoiceTotals, invoiceSequenceFor } = require("../utils/invoice");
 const { buildTaxDocument } = require("../utils/tax-document");
 const { log } = require("../utils/logger");
 const { generateQuotePdfBuffer } = require("../utils/pdfQuote");
@@ -262,8 +262,8 @@ const convertQuote = async ({ businessId, userId, id }) => {
       const products = productIds.length ? await Product.find({ _id: { $in: productIds }, businessId }).session(session) : [];
       const { totals, gstSnapshot } = buildTaxDocument({ business, counterparty: customer, products, lineItems: quote.lineItems, placeOfSupplyCode: quote.placeOfSupplyCode, shippingCharges: quote.shippingCharges, roundOff: quote.roundOff, amountPaid: 0 });
 
-      const sequence = business.invoiceNumbering?.nextSequence || 1;
       const invoiceDate = new Date();
+      const { sequence, sequenceFy } = invoiceSequenceFor(business.invoiceNumbering, invoiceDate);
       const [created] = await Invoice.create(
         [{
           businessId,
@@ -297,6 +297,7 @@ const convertQuote = async ({ businessId, userId, id }) => {
       // A quote converted to an invoice goes into the books like any other issued invoice.
       await accountingService.postInvoiceJournalEntry({ invoice, business, userId, session });
       business.invoiceNumbering.nextSequence = sequence + 1;
+      business.invoiceNumbering.sequenceFy = sequenceFy;
       await business.save({ session });
 
       await applyInvoiceStockDelta({ business, businessId, invoiceId: invoice._id, nextItems: totals.lineItems, createdBy: userId, session });

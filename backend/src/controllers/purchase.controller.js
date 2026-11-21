@@ -11,6 +11,7 @@ const { buildInventoryFlags } = require("../services/inventory.service");
 const { buildGstSnapshot, validateGstin, validateStateCode } = require("../utils/gst");
 const { applyFinancialRead, applyFinancialReads } = require("../services/financial-read.service");
 const { createSupplierLedgerEntryOnce } = require("../services/ledger.service");
+const { postPurchaseJournalEntry } = require("../services/accounting.service");
 const {
   buildPaginatedResponse,
   buildPagination,
@@ -157,10 +158,13 @@ const createPurchase = asyncHandler(async (req, res) => {
             productsPurchased: normalizedItems,
             totalAmount,
             gstSnapshot,
-            gstBreakup: gstSnapshot ? { cgst: gstSnapshot.cgst, sgst: gstSnapshot.sgst, utgst: gstSnapshot.utgst, igst: gstSnapshot.igst, taxableValue: gstSnapshot.taxableValue, inputTaxCreditEligible: true } : undefined,
+            gstBreakup: gstSnapshot ? { cgst: gstSnapshot.cgst, sgst: gstSnapshot.sgst, utgst: gstSnapshot.utgst, igst: gstSnapshot.igst, taxableValue: gstSnapshot.taxableValue, inputTaxCreditEligible: req.body.itcEligible !== false && req.body.itcEligible !== "false" } : undefined,
+            supplierInvoiceNumber: String(req.body.supplierInvoiceNumber || "").trim().slice(0, 40),
+            supplierInvoiceDate: req.body.supplierInvoiceDate ? new Date(req.body.supplierInvoiceDate) : null,
             paidAmount,
             paymentStatus: "unpaid",
             purchaseDate: req.body.purchaseDate ? new Date(req.body.purchaseDate) : new Date(),
+            centre: String(req.body.centre || "").trim().slice(0, 80),
             createdBy: req.user._id,
           },
         ],
@@ -169,6 +173,7 @@ const createPurchase = asyncHandler(async (req, res) => {
 
       const purchase = createdPurchase[0];
       await createSupplierLedgerEntryOnce({ businessId: req.tenant.businessId, supplierId: supplier._id, eventType: "PURCHASE", amount: purchase.totalAmount, direction: "DEBIT", purchaseId: purchase._id, sourceKey: `PURCHASE:${purchase._id}:PAYABLE`, createdBy: req.user._id }, { session });
+      await postPurchaseJournalEntry({ purchase, business, userId: req.user._id, session });
 
       for (const item of normalizedItems) {
         const product = productMap.get(item.productId.toString());

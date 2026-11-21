@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Info, Loader2, XCircle } from "lucide-react";
-import { gstr1ExcelRequest, gstr1Request } from "../auth/api";
+import { gstr1ExcelRequest, gstr1JsonRequest, gstr1Request } from "../auth/api";
 
 const money = (value) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(value || 0));
 const date = (value) => (value ? new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—");
@@ -94,6 +94,26 @@ const Gstr1Panel = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paramsKey, customInvalid]);
 
+  // Portal JSON (offline tool format): monthly only.
+  const downloadJson = async () => {
+    setDownloading(true); setError("");
+    try {
+      const blob = await gstr1JsonRequest({ month: selection.month });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${data?.gstin || "GSTIN"}_GSTR1_${selection.month.slice(5)}${selection.month.slice(0, 4)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      let message = "Unable to download the GSTR-1 JSON.";
+      try { message = JSON.parse(await err.response?.data?.text?.())?.message || message; } catch { /* not JSON */ }
+      setError(message);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const download = async () => {
     setDownloading(true); setError("");
     try {
@@ -175,6 +195,11 @@ const Gstr1Panel = () => {
           <button type="button" onClick={download} disabled={downloading || loading || !data || customInvalid} className="btn-primary">
             {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Download GSTR-1 Excel
           </button>
+          {selection.type === "month" ? (
+            <button type="button" onClick={downloadJson} disabled={downloading || loading || !data} className="btn-secondary" title="For the GST offline tool / portal upload. Check it in the offline tool before uploading.">
+              <Download size={16} /> Portal JSON
+            </button>
+          ) : null}
         </div>
       </div>
 

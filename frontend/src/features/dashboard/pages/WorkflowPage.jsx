@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import CentreInput, { forgetCentres } from "../../../components/ui/CentreInput";
 import {
   CalendarClock,
   CheckCircle2,
@@ -52,6 +53,7 @@ import {
   updateProductionJobStatusRequest,
   updateProjectRequest,
   updateRecurringStatusRequest,
+  setRecurringCentreRequest,
   updateTaskRequest,
   convertOrderToInvoiceRequest,
 } from "../../auth/api";
@@ -300,6 +302,7 @@ const WorkflowPage = () => {
           name: form.name?.trim() || `${selectedCustomer?.name || "Client"} monthly billing`,
           frequency: form.frequency || "MONTHLY",
           startDate: form.startDate || new Date().toISOString().slice(0, 10),
+          centre: String(form.centre || "").trim(),
           lineItems: [{
             productId,
             productName: String(form.productName || "").trim(),
@@ -483,6 +486,26 @@ const WorkflowPage = () => {
             <div className="min-w-0">
               <p className="truncate text-base font-bold text-slate-950">{item.name}</p>
               <p className="mt-0.5 text-sm text-slate-500">{item.customerId?.name || "Client"}{item.lineItems?.[0]?.productName ? ` · ${item.lineItems[0].productName}` : ""}</p>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Centre: <span className="font-semibold text-slate-700">{item.centre || "not assigned"}</span>{" "}
+                {item.status !== "CANCELLED" ? (
+                  <button
+                    type="button"
+                    className="ml-1 text-brand-600 underline-offset-2 hover:underline"
+                    onClick={() => {
+                      const next = window.prompt("Centre / property for future invoices from this profile (leave blank for none)", item.centre || "");
+                      if (next === null) return;
+                      action(async () => {
+                        const saved = await setRecurringCentreRequest(item._id, next.trim());
+                        forgetCentres();
+                        setData((current) => current.map((row) => (row._id === item._id ? { ...row, centre: saved.centre } : row)));
+                      }, "Centre saved.");
+                    }}
+                  >
+                    {item.centre ? "Change" : "Set"}
+                  </button>
+                ) : null}
+              </p>
             </div>
             <Badge>{item.status}</Badge>
           </div>
@@ -738,6 +761,10 @@ const WorkflowPage = () => {
 
               <Field label="Profile name" hint="Optional. Defaults to “Client monthly billing”.">
                 <input className="input" placeholder="e.g. Somil – Cabin 4 rent" value={form.name || ""} onChange={(e) => updateField("name", e.target.value)} />
+              </Field>
+
+              <Field label="Centre / property" hint="Optional. Every invoice from this profile is booked to this centre (profit by location).">
+                <CentreInput className="input" value={form.centre || ""} onChange={(value) => updateField("centre", value)} />
               </Field>
 
               <button type="submit" disabled={saving || !customers.length} className="btn-primary w-full justify-center">

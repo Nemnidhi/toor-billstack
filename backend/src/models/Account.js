@@ -49,4 +49,7 @@ const accountSchema = new mongoose.Schema(
 accountSchema.index({ businessId: 1, code: 1 }, { unique: true });
 accountSchema.index({ businessId: 1, type: 1 });
 
+// every change is kept in the edit log (books audit trail)
+accountSchema.plugin(require("../utils/edit-log.plugin"), { model: "Account", businessKey: "businessId" });
+
 module.exports = mongoose.model("Account", accountSchema);

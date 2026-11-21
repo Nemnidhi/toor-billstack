@@ -2,10 +2,13 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, BellRing, CheckCircle2, CircleAlert, Download, FileCheck2, LoaderCircle, Mail, MessageCircle, QrCode, ReceiptIndianRupee, RotateCcw, ShieldCheck, Trash2, X } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { EmptyState, ErrorState, LoadingState } from "../../../components/ui/PageState";
+import CentreInput, { forgetCentres } from "../../../components/ui/CentreInput";
 import { authStore } from "../../../store/authStore";
 import { uiStore } from "../../../store/uiStore";
 import { isRealEstateSelfHostedWorkspace } from "../../workspace/workspaceVisibility";
+import { ReceiptTdsFields } from "../../../components/ui/TdsFields";
 import {
+  updateInvoiceRequest,
   allocatePaymentRequest,
   cancelInvoiceRequest,
   checkEInvoiceReadinessRequest,
@@ -31,7 +34,7 @@ const money = (value) => new Intl.NumberFormat("en-IN", { style: "currency", cur
 const date = (value) => value ? new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const timestamp = (value) => value ? new Date(value).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 const today = () => new Date().toISOString().slice(0, 10);
-const newPaymentForm = (amount = "") => ({ amount: String(amount || ""), paymentDate: today(), paymentMethod: "BANK_TRANSFER", referenceNumber: "", notes: "", idempotencyKey: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}` });
+const newPaymentForm = (amount = "") => ({ amount: String(amount || ""), tdsAmount: "", tdsKind: "", paymentDate: today(), paymentMethod: "BANK_TRANSFER", referenceNumber: "", notes: "", idempotencyKey: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}` });
 const dateKey = (value) => (value ? new Date(value).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) : "");
 const isOverdue = (dueDate) => dateKey(new Date()) > dateKey(dueDate);
 const status = (invoice) => invoice.status === "cancelled" ? ["Cancelled", "bg-slate-500/10 text-slate-700 dark:text-slate-200"] : invoice.paymentStatus === "paid" ? ["Paid", "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"] : invoice.paymentStatus === "partial" ? ["Partially paid", "bg-amber-500/10 text-amber-700 dark:text-amber-300"] : Number(invoice.balanceDue || 0) > 0 && isOverdue(invoice.dueDate) ? ["Overdue", "bg-rose-500/10 text-rose-700 dark:text-rose-300"] : ["Pending", "bg-brand-500/10 text-brand-700 dark:text-brand-200"];
@@ -260,16 +263,21 @@ const InvoiceDetailPage = () => {
   const recordPayment = async (event) => {
     event.preventDefault();
     const amount = Number(paymentForm.amount);
+    const tds = Number(paymentForm.tdsAmount || 0);
     const balance = Number(invoice.balanceDue || 0);
     if (!Number.isFinite(amount) || amount <= 0) return setPaymentError("Enter an amount greater than zero.");
-    if (amount > balance) return setPaymentError(`Payment cannot exceed the remaining balance of ${money(balance)}.`);
+    if (!Number.isFinite(tds) || tds < 0) return setPaymentError("TDS must be zero or more.");
+    // the customer's TDS settles the invoice along with the money received
+    const settles = Math.round((amount + tds) * 100) / 100;
+    if (settles > balance) return setPaymentError(`Payment${tds ? " plus TDS" : ""} cannot exceed the remaining balance of ${money(balance)}.`);
     try {
       setActive("payment");
       setPaymentError("");
-      const payment = await createPaymentRequest({ ...paymentForm, amount, direction: "RECEIVED", currency: "INR", customerId: invoice.customerId?._id || invoice.customerId });
-      await allocatePaymentRequest(payment._id, { invoiceId: invoice._id, allocatedAmount: amount });
+      const { tdsAmount: _tds, tdsKind, ...fields } = paymentForm;
+      const payment = await createPaymentRequest({ ...fields, ...(tds > 0 ? { tdsAmount: tds, tdsKind } : {}), amount, direction: "RECEIVED", currency: "INR", customerId: invoice.customerId?._id || invoice.customerId });
+      await allocatePaymentRequest(payment._id, { invoiceId: invoice._id, allocatedAmount: settles });
       setPaymentOpen(false);
-      uiStore.getState().pushToast({ tone: "success", message: `${money(amount)} received and applied to ${invoice.invoiceNumber}.` });
+      uiStore.getState().pushToast({ tone: "success", message: `${money(amount)} received${tds ? ` with ${money(tds)} TDS` : ""} and applied to ${invoice.invoiceNumber}.` });
       await load();
     } catch (err) {
       setPaymentError(err.response?.data?.message || err.message || "Unable to record payment.");
@@ -342,6 +350,7 @@ const InvoiceDetailPage = () => {
           </div>
           <div className="ml-auto mt-5 max-w-sm space-y-3 text-sm"><AmountRow label="Subtotal" value={money(invoice.subtotal)} /><AmountRow label="Discount" value={`− ${money(invoice.totalDiscount)}`} /><AmountRow label="Tax/GST" value={money(invoice.totalTax)} />{Number(invoice.shippingCharges) ? <AmountRow label="Shipping" value={money(invoice.shippingCharges)} /> : null}{Number(invoice.roundOff) ? <AmountRow label="Round-off" value={money(invoice.roundOff)} /> : null}<div className="flex justify-between border-t pt-3 text-base font-semibold" style={{ borderColor: "var(--panel-border)" }}><span>Grand total</span><span>{money(invoice.grandTotal)}</span></div></div>
         </section>
+        {invoice.status !== "cancelled" ? <InvoiceCentre invoice={invoice} onSaved={load} /> : null}
         {(!isRealEstateSelfHosted || hasNotesOrTerms) ? <section className="rounded-2xl border p-5 sm:p-6" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}><h3 className="text-lg font-semibold">Notes & terms</h3><div className="mt-4 grid gap-5 md:grid-cols-2"><div><p className="text-xs font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Notes</p><p className="mt-2 text-sm">{invoice.notes || "No notes provided."}</p></div><div><p className="text-xs font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Terms & conditions</p><p className="mt-2 text-sm">{invoice.termsAndConditions || "No terms provided."}</p></div></div></section> : null}
         {!isRealEstateSelfHosted ? <section className="rounded-2xl border p-5 sm:p-6" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}><h3 className="text-lg font-semibold">Activity</h3><div className="mt-4"><Timeline invoice={invoice} /></div></section> : null}
       </main>
@@ -481,7 +490,52 @@ const PaymentAllocations = ({ rows, canReverse, reversing, onReverse, onReceipt 
   return <section className="rounded-2xl border p-5" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}><h3 className="text-lg font-semibold">Payment history</h3><p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>Every instalment remains recorded with its date, mode and reference.</p>{rows.length ? <div className="mt-4 space-y-3">{rows.map((row) => <div key={row.allocationId || row._id} className="rounded-xl border p-3 text-sm" style={{ borderColor: "var(--panel-border)" }}><div className="flex items-start justify-between gap-3"><div><p className={`font-semibold ${row.reversal ? "line-through opacity-60" : ""}`}>{money(row.allocatedAmount)}</p><p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>{date(row.payment?.paymentDate || row.createdAt)} · {row.payment?.paymentMethod || "Method not captured"}</p></div><span className={`rounded-full px-2 py-1 text-xs ${row.reversal ? "bg-rose-500/10 text-rose-700" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"}`}>{row.reversal ? "Reversed" : "Received"}</span></div><dl className="mt-3 grid gap-2 text-xs"><AmountRow label="Reference" value={row.payment?.referenceNumber || "—"} />{row.reversal ? <><AmountRow label="Reversed on" value={date(row.reversal.createdAt)} /><AmountRow label="Reason" value={row.reversal.reason} /></> : null}</dl><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => onReceipt(row)} className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium" style={{ borderColor: "var(--panel-border)" }}><Download size={13} /> Receipt</button>{canReverse && !row.reversal ? <button type="button" disabled={reversing === row.allocationId} onClick={() => onReverse(row)} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/30 px-2.5 py-1.5 text-xs font-medium text-rose-600 disabled:opacity-50">{reversing === row.allocationId ? <LoaderCircle size={13} className="animate-spin" /> : <RotateCcw size={13} />} Reverse</button> : null}</div></div>)}</div> : <EmptyState title="No payments recorded" description="Use Record payment to add the first receipt against this invoice." />}</section>;
 };
 
-const PaymentModal = ({ invoice, form, setForm, error, saving, onClose, onSubmit }) => <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4"><form onSubmit={onSubmit} className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border p-5 shadow-2xl sm:p-6" style={{ borderColor: "var(--panel-border)", background: "var(--theme-surface-strong)" }}><div className="flex items-start justify-between gap-3"><div><h3 className="text-lg font-semibold">Record payment</h3><p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>Add an instalment to {invoice.invoiceNumber}. Invoice total stays unchanged.</p></div><button type="button" onClick={onClose} disabled={saving} className="rounded-lg p-2 hover:bg-slate-500/10"><X size={18} /></button></div><div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-slate-500/[.06] p-3 text-sm"><div><p className="text-xs" style={{ color: "var(--text-muted)" }}>Total</p><p className="mt-1 font-semibold">{money(invoice.grandTotal)}</p></div><div><p className="text-xs" style={{ color: "var(--text-muted)" }}>Received</p><p className="mt-1 font-semibold text-emerald-600">{money(invoice.amountPaid)}</p></div><div><p className="text-xs" style={{ color: "var(--text-muted)" }}>Due</p><p className="mt-1 font-semibold text-amber-600">{money(invoice.balanceDue)}</p></div></div>{error ? <p className="mt-4 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-600">{error}</p> : null}<div className="mt-5 grid gap-4 sm:grid-cols-2"><label><span className="mb-2 flex items-center justify-between gap-2 text-sm font-medium"><span>Amount received</span><button type="button" onClick={() => setForm((value) => ({ ...value, amount: String(invoice.balanceDue) }))} className="text-xs font-semibold text-brand-600">Full balance</button></span><input type="number" min="0.01" max={invoice.balanceDue} step="0.01" required value={form.amount} onChange={(event) => setForm((value) => ({ ...value, amount: event.target.value }))} className="field" /></label><label><span className="mb-2 block text-sm font-medium">Payment date</span><input type="date" required value={form.paymentDate} onChange={(event) => setForm((value) => ({ ...value, paymentDate: event.target.value }))} className="field" /></label><label><span className="mb-2 block text-sm font-medium">Payment mode</span><select value={form.paymentMethod} onChange={(event) => setForm((value) => ({ ...value, paymentMethod: event.target.value }))} className="field"><option value="BANK_TRANSFER">Bank transfer</option><option value="UPI">UPI</option><option value="CASH">Cash</option><option value="CHEQUE">Cheque</option><option value="CARD">Card</option><option value="OTHER">Other</option></select></label><label><span className="mb-2 block text-sm font-medium">Reference</span><input value={form.referenceNumber} onChange={(event) => setForm((value) => ({ ...value, referenceNumber: event.target.value }))} placeholder="UTR / cheque / transaction ID" className="field" /></label><label className="sm:col-span-2"><span className="mb-2 block text-sm font-medium">Notes</span><textarea rows="3" value={form.notes} onChange={(event) => setForm((value) => ({ ...value, notes: event.target.value }))} placeholder="Optional payment note" className="field" /></label></div><div className="mt-6 flex justify-end gap-3"><button type="button" onClick={onClose} disabled={saving} className="rounded-xl border px-4 py-2.5 text-sm" style={{ borderColor: "var(--panel-border)" }}>Cancel</button><button disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{saving ? <LoaderCircle size={16} className="animate-spin" /> : <ReceiptIndianRupee size={16} />}{saving ? "Recording..." : "Record payment"}</button></div></form></div>;
+// Which property / centre this invoice's income belongs to. Works on paid invoices too;
+// changing it moves the income in the books to the new centre.
+const InvoiceCentre = ({ invoice, onSaved }) => {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(invoice.centre || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { setValue(invoice.centre || ""); }, [invoice.centre]);
+  const save = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await updateInvoiceRequest(invoice._id, { centre: value.trim() });
+      forgetCentres();
+      uiStore.getState().pushToast({ tone: "success", message: value.trim() ? `Booked to ${value.trim()}.` : "Centre removed." });
+      setEditing(false);
+      await onSaved();
+    } catch (err) {
+      setError(err.response?.data?.message || "Unable to save the centre.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <section className="rounded-2xl border p-5 sm:p-6" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Centre / property</p>
+          {!editing ? <p className="mt-1 text-sm font-semibold">{invoice.centre || "Not assigned"}</p> : null}
+        </div>
+        {!editing ? <button type="button" onClick={() => setEditing(true)} className="rounded-lg border px-3 py-1.5 text-xs font-medium" style={{ borderColor: "var(--panel-border)" }}>{invoice.centre ? "Change" : "Assign centre"}</button> : null}
+      </div>
+      {editing ? (
+        <form onSubmit={save} className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="min-w-[220px] flex-1"><CentreInput value={value} onChange={setValue} /></div>
+          <button disabled={saving} className="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Saving..." : "Save"}</button>
+          <button type="button" disabled={saving} onClick={() => { setEditing(false); setValue(invoice.centre || ""); setError(""); }} className="rounded-xl border px-4 py-2.5 text-sm" style={{ borderColor: "var(--panel-border)" }}>Cancel</button>
+          {error ? <p role="alert" className="w-full text-sm text-rose-600">{error}</p> : null}
+        </form>
+      ) : null}
+    </section>
+  );
+};
+
+const PaymentModal = ({ invoice, form, setForm, error, saving, onClose, onSubmit }) => <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4"><form onSubmit={onSubmit} className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border p-5 shadow-2xl sm:p-6" style={{ borderColor: "var(--panel-border)", background: "var(--theme-surface-strong)" }}><div className="flex items-start justify-between gap-3"><div><h3 className="text-lg font-semibold">Record payment</h3><p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>Add an instalment to {invoice.invoiceNumber}. Invoice total stays unchanged.</p></div><button type="button" onClick={onClose} disabled={saving} className="rounded-lg p-2 hover:bg-slate-500/10"><X size={18} /></button></div><div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-slate-500/[.06] p-3 text-sm"><div><p className="text-xs" style={{ color: "var(--text-muted)" }}>Total</p><p className="mt-1 font-semibold">{money(invoice.grandTotal)}</p></div><div><p className="text-xs" style={{ color: "var(--text-muted)" }}>Received</p><p className="mt-1 font-semibold text-emerald-600">{money(invoice.amountPaid)}</p></div><div><p className="text-xs" style={{ color: "var(--text-muted)" }}>Due</p><p className="mt-1 font-semibold text-amber-600">{money(invoice.balanceDue)}</p></div></div>{error ? <p className="mt-4 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-600">{error}</p> : null}<div className="mt-5 grid gap-4 sm:grid-cols-2"><label><span className="mb-2 flex items-center justify-between gap-2 text-sm font-medium"><span>Amount received</span><button type="button" onClick={() => setForm((value) => ({ ...value, amount: String(invoice.balanceDue) }))} className="text-xs font-semibold text-brand-600">Full balance</button></span><input type="number" min="0.01" max={invoice.balanceDue} step="0.01" required value={form.amount} onChange={(event) => setForm((value) => ({ ...value, amount: event.target.value }))} className="field" /></label><label><span className="mb-2 block text-sm font-medium">Payment date</span><input type="date" required value={form.paymentDate} onChange={(event) => setForm((value) => ({ ...value, paymentDate: event.target.value }))} className="field" /></label><ReceiptTdsFields form={form} setForm={setForm} /><label><span className="mb-2 block text-sm font-medium">Payment mode</span><select value={form.paymentMethod} onChange={(event) => setForm((value) => ({ ...value, paymentMethod: event.target.value }))} className="field"><option value="BANK_TRANSFER">Bank transfer</option><option value="UPI">UPI</option><option value="CASH">Cash</option><option value="CHEQUE">Cheque</option><option value="CARD">Card</option><option value="OTHER">Other</option></select></label><label><span className="mb-2 block text-sm font-medium">Reference</span><input value={form.referenceNumber} onChange={(event) => setForm((value) => ({ ...value, referenceNumber: event.target.value }))} placeholder="UTR / cheque / transaction ID" className="field" /></label><label className="sm:col-span-2"><span className="mb-2 block text-sm font-medium">Notes</span><textarea rows="3" value={form.notes} onChange={(event) => setForm((value) => ({ ...value, notes: event.target.value }))} placeholder="Optional payment note" className="field" /></label></div><div className="mt-6 flex justify-end gap-3"><button type="button" onClick={onClose} disabled={saving} className="rounded-xl border px-4 py-2.5 text-sm" style={{ borderColor: "var(--panel-border)" }}>Cancel</button><button disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{saving ? <LoaderCircle size={16} className="animate-spin" /> : <ReceiptIndianRupee size={16} />}{saving ? "Recording..." : "Record payment"}</button></div></form></div>;
 
 const GstEInvoicePanel = ({ invoice, eInvoice, result, active, onCheck, onPrepare, showEInvoiceActions }) => {
   const breakup = invoice.gstBreakup || {};

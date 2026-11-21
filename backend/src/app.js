@@ -50,7 +50,11 @@ const keepRawBodyForWebhooks = (req, _res, buf) => {
 const jsonParser = express.json({ limit: "1mb", verify: keepRawBodyForWebhooks });
 // A bank statement file arrives as base64 inside JSON; the page allows files up
 // to 5 MB, which is about 6.7 MB once encoded.
-const statementImportPath = "/api/accounting/bank-statements/import";
+const statementImportPaths = new Set([
+  "/api/accounting/bank-statements/import",
+  "/api/accounting/tds/26as/import",
+  "/api/gst/2b/import",
+]);
 const statementJsonParser = express.json({ limit: "8mb" });
 const corsMiddleware = cors(buildCorsOptions());
 
@@ -78,7 +82,7 @@ app.use((req, res, next) => {
   if (req.originalUrl.startsWith("/api/billing/webhook")) {
     return next();
   }
-  if (req.path === statementImportPath) {
+  if (statementImportPaths.has(req.path) || (req.method === "POST" && /^\/api\/documents\/(purchase|expense|supplier)\/[0-9a-fA-F]{24}$/.test(req.path))) {
     return statementJsonParser(req, res, next);
   }
 
@@ -135,6 +139,7 @@ app.use("/api/products", productRoutes);
 app.use("/api/purchases", purchaseRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/suppliers", supplierRoutes);
+app.use("/api/documents", require("./routes/document.routes"));
 app.use("/api/team", teamRoutes);
 app.use("/api/invoices", invoiceRoutes);
 app.use("/api/integrations", integrationRoutes);

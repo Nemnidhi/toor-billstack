@@ -66,6 +66,9 @@ const customerSchema = new mongoose.Schema(
     },
     stateCode: { type: String, trim: true, default: "" },
     placeOfSupplyCode: { type: String, trim: true, default: "" },
+    // Income-tax identity: PAN of the party; TAN when the customer deducts TDS from what it pays us.
+    pan: { type: String, trim: true, uppercase: true, default: "" },
+    tan: { type: String, trim: true, uppercase: true, default: "" },
     notes: {
       type: String,
       trim: true,
@@ -88,5 +91,8 @@ customerSchema.index({ businessId: 1, email: 1 });
 customerSchema.index({ businessId: 1, phone: 1 });
 customerSchema.index({ businessId: 1, _id: 1 });
 customerSchema.index({ businessId: 1, isSampleData: 1 });
+
+// every change is kept in the edit log (books audit trail)
+customerSchema.plugin(require("../utils/edit-log.plugin"), { model: "Customer", businessKey: "businessId" });
 
 module.exports = mongoose.model("Customer", customerSchema);

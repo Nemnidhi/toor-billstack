@@ -67,4 +67,7 @@ const bankAccountSchema = new mongoose.Schema(
 bankAccountSchema.index({ businessId: 1, accountName: 1 });
 bankAccountSchema.index({ businessId: 1, accountNumber: 1 });
 
+// every change is kept in the edit log (books audit trail)
+bankAccountSchema.plugin(require("../utils/edit-log.plugin"), { model: "BankAccount", businessKey: "businessId" });
+
 module.exports = mongoose.model("BankAccount", bankAccountSchema);

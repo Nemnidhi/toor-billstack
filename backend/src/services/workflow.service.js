@@ -101,7 +101,8 @@ const buildBusinessSnapshot = (business) => ({
 
 const nextNumber = ({ business, field, prefix, format, date = new Date() }) => {
   const numbering = business[field] || {};
-  const sequence = numbering.nextSequence || 1;
+  // a format with {FY} restarts at 1 each financial year
+  const { sequence, sequenceFy } = require("../utils/invoice").invoiceSequenceFor({ format: numbering.format || format, nextSequence: numbering.nextSequence, sequenceFy: numbering.sequenceFy }, date);
   const value = buildInvoiceNumber({
     prefix: numbering.prefix || prefix,
     format: numbering.format || format,
@@ -112,6 +113,7 @@ const nextNumber = ({ business, field, prefix, format, date = new Date() }) => {
     prefix: numbering.prefix || prefix,
     format: numbering.format || format,
     nextSequence: sequence + 1,
+    sequenceFy,
   };
   return value;
 };
@@ -248,6 +250,7 @@ const createInvoiceFromWorkflow = async ({ business, customer, lineItems, source
     gstSnapshot,
     gstBreakup: gstSnapshot ? { cgst: gstSnapshot.cgst, sgst: gstSnapshot.sgst, utgst: gstSnapshot.utgst, igst: gstSnapshot.igst, taxableValue: gstSnapshot.taxableValue, hsnSacSummary: gstSnapshot.hsnSacSummary } : undefined,
     status: "issued",
+    centre: String(source.centre || "").trim().slice(0, 80),
     createdBy: userId,
   };
   if (source.type === "ORDER") payload.sourceOrderId = source.id;
@@ -617,6 +620,7 @@ const createRecurringProfile = async ({ businessId, userId, payload }) => {
         renewalDate: normalizeDate(payload.renewalDate, "renewal date"),
         renewalReminderDays: Number(payload.renewalReminderDays || 30),
         autoRenew: Boolean(payload.autoRenew),
+        centre: String(payload.centre || "").trim().slice(0, 80),
         createdBy: userId,
       }], { session });
       if (profile.renewalDate && customer.email) {
@@ -665,6 +669,17 @@ const setRecurringStatus = async ({ businessId, userId, id, status, req }) => {
   return profile;
 };
 
+// The property / centre future invoices from this profile are booked to.
+const setRecurringCentre = async ({ businessId, userId, id, centre, req }) => {
+  const profile = await RecurringBillingProfile.findOne({ _id: id, businessId });
+  if (!profile) throw new AppError("Recurring profile not found", 404);
+  profile.centre = String(centre || "").trim().slice(0, 80);
+  profile.updatedBy = userId;
+  await profile.save();
+  await writeAuditLog({ req, businessId, action: "RECURRING_CENTRE_SET", entityType: "RecurringBillingProfile", entityId: profile._id, metadata: { centre: profile.centre } });
+  return profile;
+};
+
 const deleteRecurringProfile = async ({ businessId, id, req }) => {
   const profile = await RecurringBillingProfile.findOne({ _id: id, businessId });
   if (!profile) throw new AppError("Recurring profile not found", 404);
@@ -706,7 +721,7 @@ const generateRecurringInvoice = async ({ businessId, userId, id, runDate = new 
         business,
         customer,
         lineItems: profile.lineItems,
-        source: { type: "RECURRING", id: profile._id, occurrenceKey: key, paymentTermsDays: profile.paymentTermsDays, placeOfSupplyCode: profile.placeOfSupplyCode },
+        source: { type: "RECURRING", id: profile._id, occurrenceKey: key, paymentTermsDays: profile.paymentTermsDays, placeOfSupplyCode: profile.placeOfSupplyCode, centre: profile.centre || "" },
         userId,
         session,
       });
@@ -894,6 +909,7 @@ module.exports = {
   createOrder,
   createProject,
   createRecurringProfile,
+  setRecurringCentre,
   createTask,
   deleteRecurringProfile,
   convertOrderToInvoice,

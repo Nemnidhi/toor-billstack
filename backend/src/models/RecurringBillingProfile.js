@@ -30,6 +30,8 @@ const recurringBillingProfileSchema = new mongoose.Schema(
     interval: { type: Number, default: 1, min: 1 },
     startDate: { type: Date, required: true },
     nextBillingDate: { type: Date, required: true, index: true },
+    // Property / centre this belongs to (profit by location). Free text, blank = not assigned.
+    centre: { type: String, trim: true, maxlength: 80, default: "" },
     endDate: { type: Date, default: null },
     status: { type: String, enum: ["DRAFT", "ACTIVE", "PAUSED", "COMPLETED", "CANCELLED"], default: "DRAFT", index: true },
     autoGenerateInvoice: { type: Boolean, default: true },

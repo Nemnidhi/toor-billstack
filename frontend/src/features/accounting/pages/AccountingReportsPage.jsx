@@ -36,6 +36,9 @@ import { money } from "../../dashboard/reportPresentation";
 import BackfillTab from "./BackfillTab";
 import BankAccountsTab from "./BankAccountsTab";
 import ReconciliationTab from "./ReconciliationTab";
+import TdsTab from "./TdsTab";
+import ControlsTab, { GoldhawkBanner } from "./ControlsTab";
+import YearEndTab from "./YearEndTab";
 import { ShieldCheck } from "lucide-react";
 
 const AccountingReportsPage = () => {
@@ -45,6 +48,8 @@ const AccountingReportsPage = () => {
   const [selectedEntity, setSelectedEntity] = useState("all");
   const [selectedPeriod, setSelectedPeriod] = useState("FY");
   const [dateRange, setDateRange] = useState({ from: "", to: "" });
+  // Property / centre for the Profit & Loss ("" = all, "__unassigned__" = lines with no centre).
+  const [selectedCentre, setSelectedCentre] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -72,7 +77,7 @@ const AccountingReportsPage = () => {
     try {
       let loadErr = null;
       const [pl, bs, warn, accs] = await Promise.all([
-        getProfitLossRequest(queryParams).catch((e) => {
+        getProfitLossRequest({ ...queryParams, ...(selectedCentre ? { centre: selectedCentre } : {}) }).catch((e) => {
           loadErr = e;
           return null;
         }),
@@ -115,7 +120,7 @@ const AccountingReportsPage = () => {
 
   useEffect(() => {
     loadAll();
-  }, [selectedEntity, selectedPeriod, dateRange.from, dateRange.to]);
+  }, [selectedEntity, selectedPeriod, dateRange.from, dateRange.to, selectedCentre]);
 
   useEffect(() => {
     if (activeTab === "bank_book") {
@@ -308,6 +313,8 @@ const AccountingReportsPage = () => {
         </div>
       </div>
 
+      <GoldhawkBanner />
+
       {/* Historical Data Warning Banner */}
       {warningData?.hasUnpostedLegacyData && activeTab !== "backfill" && (
         <div role="status" className="rounded-2xl border border-amber-300 bg-amber-50/80 p-4 text-amber-900 shadow-sm dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-200">
@@ -351,6 +358,9 @@ const AccountingReportsPage = () => {
           { key: "backfill", label: "Historical Backfill", icon: ShieldCheck },
           { key: "bank_accounts", label: "Bank Accounts", icon: Building2 },
           { key: "reconciliation", label: "Bank Reconciliation", icon: CheckCircle2 },
+          { key: "tds", label: "TDS", icon: Wallet },
+          { key: "controls", label: "Lock & edit log", icon: ShieldCheck },
+          { key: "year_end", label: "Year end", icon: Scale },
           { key: "export", label: "Accountant Export Pack", icon: Download },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -441,7 +451,24 @@ const AccountingReportsPage = () => {
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">
                 Statement of Profit and Loss
               </h2>
-              <span className="text-xs text-slate-500">{plData.period?.periodLabel}</span>
+              <span className="text-xs text-slate-500">
+                {plData.period?.periodLabel}
+                {selectedCentre ? ` - ${selectedCentre === "__unassigned__" ? "not assigned to a centre" : selectedCentre}` : ""}
+              </span>
+            </div>
+            <div className="ml-auto mr-2 flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <Building2 className="h-4 w-4 text-slate-400" />
+              <select
+                value={selectedCentre}
+                onChange={(e) => setSelectedCentre(e.target.value)}
+                className="bg-transparent text-xs font-semibold text-slate-800 outline-none dark:text-slate-200"
+                aria-label="Centre"
+              >
+                <option value="">All centres</option>
+                {(plData.byCentre || []).map((row) => (
+                  <option key={row.centre} value={row.centre}>{row.label}</option>
+                ))}
+              </select>
             </div>
             <button
               onClick={() => handleDownloadCsv("profit-loss")}
@@ -568,6 +595,39 @@ const AccountingReportsPage = () => {
               </tbody>
             </table>
           </div>
+
+          {(plData.byCentre || []).length > 0 && (
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex items-baseline justify-between px-5 pt-4">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Profit by centre</h3>
+                <span className="text-xs text-slate-500">Whole period; click a centre to see its own statement</span>
+              </div>
+              <table className="mt-2 w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs font-semibold text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
+                  <tr>
+                    <th className="px-5 py-3">Centre</th>
+                    <th className="px-4 py-3 text-right">Income</th>
+                    <th className="px-4 py-3 text-right">Expenses</th>
+                    <th className="px-5 py-3 text-right">Profit</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {plData.byCentre.map((row) => (
+                    <tr
+                      key={row.centre}
+                      onClick={() => setSelectedCentre(row.centre === selectedCentre ? "" : row.centre)}
+                      className={"cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 " + (row.centre === selectedCentre ? "bg-slate-50 dark:bg-slate-800/40" : "")}
+                    >
+                      <td className="px-5 py-2.5 font-medium">{row.label}</td>
+                      <td className="px-4 py-2.5 text-right">{money(row.income)}</td>
+                      <td className="px-4 py-2.5 text-right">{money(row.expenses)}</td>
+                      <td className={"px-5 py-2.5 text-right font-semibold " + (row.netProfit >= 0 ? "text-emerald-600" : "text-rose-600")}>{money(row.netProfit)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
@@ -871,6 +931,19 @@ const AccountingReportsPage = () => {
       {/* TAB: BANK RECONCILIATION */}
       {activeTab === "reconciliation" && (
         <ReconciliationTab selectedEntity={selectedEntity} />
+      )}
+
+      {/* TAB: TDS */}
+      {activeTab === "tds" && (
+        <TdsTab selectedEntity={selectedEntity} />
+      )}
+
+      {activeTab === "controls" && (
+        <ControlsTab selectedEntity={selectedEntity} role={user?.role} />
+      )}
+
+      {activeTab === "year_end" && (
+        <YearEndTab selectedEntity={selectedEntity} />
       )}
 
       {/* TAB 7: ACCOUNTANT EXPORT PACK */}

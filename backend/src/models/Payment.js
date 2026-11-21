@@ -11,6 +11,10 @@ const schema = new mongoose.Schema({
   customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", default: null, index: true, immutable: true },
   supplierId: { type: mongoose.Schema.Types.ObjectId, ref: "Supplier", default: null, index: true, immutable: true },
   notes: { type: String, trim: true, default: "", immutable: true },
+  // Income tax the customer deducted and paid to the government for us (TDS). The invoice is
+  // settled by amount + tdsAmount; tdsAmount is booked as TDS receivable.
+  tdsAmount: { type: Number, min: 0, default: 0, immutable: true },
+  tdsKind: { type: String, trim: true, uppercase: true, default: "", immutable: true },
   status: { type: String, enum: ["POSTED", "REVERSED"], default: "POSTED", immutable: true },
   reversalOfPaymentId: { type: mongoose.Schema.Types.ObjectId, ref: "Payment", default: null, immutable: true },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, immutable: true },
@@ -19,4 +23,7 @@ schema.index({ businessId: 1, paymentDate: -1, createdAt: -1 });
 schema.index({ businessId: 1, reversalOfPaymentId: 1 }, { unique: true, partialFilterExpression: { reversalOfPaymentId: { $type: "objectId" } } });
 schema.index({ businessId: 1, idempotencyKey: 1 }, { unique: true, partialFilterExpression: { idempotencyKey: { $type: "string", $ne: "" } } });
 schema.pre(["findOneAndUpdate", "updateOne", "updateMany"], () => { throw new Error("Payments are immutable; create a reversal instead."); });
+// every change is kept in the edit log (books audit trail)
+schema.plugin(require("../utils/edit-log.plugin"), { model: "Payment", businessKey: "businessId" });
+
 module.exports = mongoose.model("Payment", schema);

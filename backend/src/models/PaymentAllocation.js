@@ -10,4 +10,7 @@ const schema = new mongoose.Schema({
 schema.index({ paymentId: 1, invoiceId: 1 }, { unique: true, partialFilterExpression: { invoiceId: { $type: "objectId" } } });
 schema.index({ paymentId: 1, purchaseId: 1 }, { unique: true, partialFilterExpression: { purchaseId: { $type: "objectId" } } });
 schema.pre(["findOneAndUpdate", "updateOne", "updateMany"], () => { throw new Error("Payment allocations are immutable."); });
+// every change is kept in the edit log (books audit trail)
+schema.plugin(require("../utils/edit-log.plugin"), { model: "PaymentAllocation", businessKey: "businessId" });
+
 module.exports = mongoose.model("PaymentAllocation", schema);

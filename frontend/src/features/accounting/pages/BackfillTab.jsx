@@ -133,7 +133,7 @@ const BackfillTab = ({ selectedEntity, onBackfillComplete }) => {
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {Object.entries(dryRunResult.breakdown).map(([key, val]) => (
                   <tr key={key}>
-                    <td className="px-4 py-2 font-semibold capitalize">{key}</td>
+                    <td className="px-4 py-2 font-semibold capitalize">{key.replace(/([A-Z])/g, " $1").toLowerCase()}</td>
                     <td className="px-4 py-2">{val.candidates}</td>
                     <td className="px-4 py-2">{val.alreadyPosted}</td>
                     <td className="px-4 py-2 font-bold text-emerald-600">{val.wouldPost}</td>

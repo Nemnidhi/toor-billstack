@@ -6,11 +6,30 @@ const Invoice = require("../models/Invoice");
 const Payment = require("../models/Payment");
 const Expense = require("../models/Expense");
 const Customer = require("../models/Customer");
+const Purchase = require("../models/Purchase");
+const CreditNote = require("../models/CreditNote");
+const SalesReturn = require("../models/SalesReturn");
+const RecurringBillingProfile = require("../models/RecurringBillingProfile");
 const AppError = require("../utils/appError");
 const { fromMinorUnits, toMinorUnits } = require("../utils/money");
 const { resolveIndianPeriod } = require("../utils/indian-fy");
 const { escapeCsvCell, arrayToCsv, buildMultiSectionCsv } = require("../utils/csv-formatter");
 const { ensureDefaultAccounts, getTrialBalance } = require("./accounting.service");
+
+// Signed paise; report amounts can be negative (a contra account, a net reversal).
+const signedPaise = (value) => Math.round(Number(value || 0) * 100);
+const UNASSIGNED_CENTRE = "__unassigned__";
+const centreOf = (value) => String(value || "").trim();
+const mergeCentreRows = (rows) => {
+  const merged = new Map();
+  for (const row of rows) {
+    const item = merged.get(row.centre) || { centre: row.centre, label: row.label, incomeMinor: 0, expensesMinor: 0 };
+    item.incomeMinor += signedPaise(row.income);
+    item.expensesMinor += signedPaise(row.expenses);
+    merged.set(row.centre, item);
+  }
+  return [...merged.values()].map((item) => ({ centre: item.centre, label: item.label, income: fromMinorUnits(item.incomeMinor), expenses: fromMinorUnits(item.expensesMinor), netProfit: fromMinorUnits(item.incomeMinor - item.expensesMinor) }));
+};
 
 /**
  * Historical Data Warning: checks if legacy unposted transactions exist in the period.
@@ -28,31 +47,43 @@ const getHistoricalWarning = async ({ businessId, fromDate, toDate }) => {
     return Object.keys(filter).length ? { [field]: filter } : {};
   };
 
-  const [invoices, payments, expenses] = await Promise.all([
+  const [invoices, payments, expenses, purchases, creditNotes, salesReturns] = await Promise.all([
     Invoice.find({ businessId, status: { $in: ["issued", "cancelled"] }, grandTotal: { $gt: 0 }, ...range("invoiceDate") }).select("_id").lean(),
-    Payment.find({ businessId, direction: "RECEIVED", amount: { $gt: 0 }, status: { $ne: "REVERSED" }, ...range("paymentDate") }).select("_id").lean(),
+    Payment.find({ businessId, amount: { $gt: 0 }, ...range("paymentDate") }).select("_id direction supplierId reversalOfPaymentId").lean(),
     Expense.find({ businessId, status: { $ne: "CANCELLED" }, totalAmount: { $gt: 0 }, ...range("expenseDate") }).select("_id").lean(),
+    Purchase.find({ businessId, totalAmount: { $gt: 0 }, ...range("purchaseDate") }).select("_id").lean(),
+    CreditNote.find({ businessId, status: "ISSUED", ...range("createdAt") }).select("_id").lean(),
+    SalesReturn.find({ businessId, status: "ISSUED", totalAmount: { $gt: 0 }, ...range("createdAt") }).select("_id").lean(),
   ]);
 
+  const paymentKey = (row) => {
+    if (row.reversalOfPaymentId) return `PAYMENT_REVERSAL:${row._id}`;
+    if (row.direction === "RECEIVED") return `PAYMENT:${row._id}:RECEIVED`;
+    if (row.direction === "PAID" && row.supplierId) return `PAYMENT:${row._id}:PAID`;
+    return null;
+  };
   const keyed = [
     ...invoices.map((row) => ["invoices", `INVOICE:${row._id}:ISSUED`]),
-    ...payments.map((row) => ["payments", `PAYMENT:${row._id}:RECEIVED`]),
+    ...payments.map((row) => ["payments", paymentKey(row)]).filter(([, key]) => key),
     ...expenses.map((row) => ["expenses", `EXPENSE:${row._id}:RECORDED`]),
+    ...purchases.map((row) => ["purchases", `PURCHASE:${row._id}:RECORDED`]),
+    ...creditNotes.map((row) => ["creditNotes", `CREDIT_NOTE:${row._id}:ISSUED`]),
+    ...salesReturns.map((row) => ["salesReturns", `SALES_RETURN:${row._id}:ISSUED`]),
   ];
   const posted = new Set(
     (await JournalEntry.find({ businessId, sourceKey: { $in: keyed.map(([, key]) => key) } }).select("sourceKey").lean())
       .map((row) => row.sourceKey)
   );
 
-  const missing = { invoices: 0, payments: 0, expenses: 0 };
+  const missing = { invoices: 0, payments: 0, expenses: 0, purchases: 0, creditNotes: 0, salesReturns: 0 };
   keyed.forEach(([kind, key]) => { if (!posted.has(key)) missing[kind] += 1; });
 
   const unpostedInvoices = missing.invoices;
   const unpostedPayments = missing.payments;
   const unpostedExpenses = missing.expenses;
+  const unpostedTotal = Object.values(missing).reduce((sum, value) => sum + value, 0);
   const totalCandidates = keyed.length;
-  const totalPosted = keyed.length - (unpostedInvoices + unpostedPayments + unpostedExpenses);
-  const unpostedTotal = unpostedInvoices + unpostedPayments + unpostedExpenses;
+  const totalPosted = keyed.length - unpostedTotal;
 
   let status = "COMPLETE";
   if (totalCandidates > 0 && totalPosted === 0) {
@@ -70,12 +101,15 @@ const getHistoricalWarning = async ({ businessId, fromDate, toDate }) => {
       ? "Historical accounting data incomplete / backfill required"
       : null,
     message: hasUnpostedLegacyData
-      ? "Some invoices, payments or expenses were saved before automatic accounting entries were switched on, so the Profit & Loss and Balance Sheet don't include them yet. Run the Historical Backfill once to post them; it is safe to repeat and never changes the original records."
+      ? "Some invoices, payments, purchase bills, credit notes, returns or expenses were saved before automatic accounting entries covered them, so the Profit & Loss and Balance Sheet don't include them yet. Run the Historical Backfill once to post them; it is safe to repeat and never changes the original records."
       : null,
     unpostedCounts: {
       invoices: unpostedInvoices,
       payments: unpostedPayments,
       expenses: unpostedExpenses,
+      purchases: missing.purchases,
+      creditNotes: missing.creditNotes,
+      salesReturns: missing.salesReturns,
       total: unpostedTotal,
     },
     counts: {
@@ -107,6 +141,10 @@ const getProfitAndLossReport = async ({ businessId, query = {} }) => {
 
   const entries = await JournalEntry.find(entriesQuery);
 
+  // ?centre=<name> limits the report to one property / centre; ?centre=__unassigned__ to lines with none.
+  const centreFilter = query.centre === undefined || query.centre === null || query.centre === "" ? null : query.centre === UNASSIGNED_CENTRE ? "" : centreOf(query.centre);
+  const byCentre = new Map();
+
   const incomeMap = new Map();
   const expenseMap = new Map();
 
@@ -133,6 +171,15 @@ const getProfitAndLossReport = async ({ businessId, query = {} }) => {
       const accId = line.accountId.toString();
       const acc = accountsMap.get(accId);
       if (!acc) return;
+
+      if (acc.type === "INCOME" || acc.type === "EXPENSE") {
+        const centre = centreOf(line.centre);
+        const row = byCentre.get(centre) || { centre, incomeMinor: 0, expensesMinor: 0 };
+        if (acc.type === "INCOME") row.incomeMinor += line.creditMinor - line.debitMinor;
+        else row.expensesMinor += line.debitMinor - line.creditMinor;
+        byCentre.set(centre, row);
+      }
+      if (centreFilter !== null && centreOf(line.centre) !== centreFilter) return;
 
       if (acc.type === "INCOME") {
         if (!incomeMap.has(accId)) {
@@ -203,8 +250,40 @@ const getProfitAndLossReport = async ({ businessId, query = {} }) => {
     netProfit: fromMinorUnits(netProfitMinor),
     netProfitMinor,
     isProfit: netProfitMinor >= 0,
+    centre: centreFilter === null ? null : centreFilter || UNASSIGNED_CENTRE,
+    // Profit by property / centre for the whole period (not narrowed by ?centre).
+    byCentre: [...byCentre.values()]
+      .sort((a, b) => (a.centre === "") - (b.centre === "") || a.centre.localeCompare(b.centre))
+      .map((row) => ({
+        centre: row.centre || UNASSIGNED_CENTRE,
+        label: row.centre || "Not assigned",
+        income: fromMinorUnits(row.incomeMinor),
+        expenses: fromMinorUnits(row.expensesMinor),
+        netProfit: fromMinorUnits(row.incomeMinor - row.expensesMinor),
+      })),
     legacyWarning,
   };
+};
+
+/** Every centre name in use, for the centre pickers. */
+const listCentres = async ({ businessId }) => {
+  const [invoiceCentres, expenseCentres, purchaseCentres, profileCentres, business] = await Promise.all([
+    Invoice.distinct("centre", { businessId }),
+    Expense.distinct("centre", { businessId }),
+    Purchase.distinct("centre", { businessId }),
+    RecurringBillingProfile.distinct("centre", { businessId }),
+    Business.findById(businessId).select("billingParentId"),
+  ]);
+  const names = new Set([...invoiceCentres, ...expenseCentres, ...purchaseCentres, ...profileCentres].map(centreOf).filter(Boolean));
+  // TOOR and Goldhawk share one office and the same centres.
+  const relatedIds = [business?.billingParentId].filter(Boolean);
+  const children = await Business.find({ billingParentId: businessId }).select("_id");
+  relatedIds.push(...children.map((row) => row._id));
+  if (relatedIds.length) {
+    const more = await Promise.all([Invoice.distinct("centre", { businessId: { $in: relatedIds } }), Expense.distinct("centre", { businessId: { $in: relatedIds } })]);
+    more.flat().map(centreOf).filter(Boolean).forEach((name) => names.add(name));
+  }
+  return [...names].sort((a, b) => a.localeCompare(b));
 };
 
 /**
@@ -539,7 +618,7 @@ const getConsolidatedReport = async ({ reportType, homeBusinessId, query = {} })
     });
 
     combinedIncomeMap.forEach((item) => {
-      item.totalAmount = fromMinorUnits(toMinorUnits(item.toorAmount, "Income", { allowZero: true }) + toMinorUnits(item.goldhawkAmount, "Income", { allowZero: true }));
+      item.totalAmount = fromMinorUnits(signedPaise(item.toorAmount) + signedPaise(item.goldhawkAmount));
     });
 
     const combinedExpenseMap = new Map();
@@ -565,7 +644,7 @@ const getConsolidatedReport = async ({ reportType, homeBusinessId, query = {} })
     });
 
     combinedExpenseMap.forEach((item) => {
-      item.totalAmount = fromMinorUnits(toMinorUnits(item.toorAmount, "Expense", { allowZero: true }) + toMinorUnits(item.goldhawkAmount, "Expense", { allowZero: true }));
+      item.totalAmount = fromMinorUnits(signedPaise(item.toorAmount) + signedPaise(item.goldhawkAmount));
     });
 
     const totalIncome = fromMinorUnits(toorPl.income.totalMinor + ghPl.income.totalMinor);
@@ -598,6 +677,8 @@ const getConsolidatedReport = async ({ reportType, homeBusinessId, query = {} })
       goldhawkNetProfit: ghPl.netProfit,
       isProfit: netProfitMinor >= 0,
       breakdown: { toor: toorPl, goldhawk: ghPl },
+      centre: toorPl.centre,
+      byCentre: mergeCentreRows([...(toorPl.byCentre || []), ...(ghPl.byCentre || [])]),
       legacyWarning: {
         hasUnpostedLegacyData: toorPl.legacyWarning?.hasUnpostedLegacyData || ghPl.legacyWarning?.hasUnpostedLegacyData,
         message: (toorPl.legacyWarning?.hasUnpostedLegacyData || ghPl.legacyWarning?.hasUnpostedLegacyData)
@@ -961,7 +1042,8 @@ const getAccountantExportPack = async ({ businessId, isConsolidated = false, hom
   let igstInput = 0;
 
   invoices.forEach((inv) => {
-    const isGoldhawk = inv.sellerSnapshot?.billingEntityCode === "GOLDHAWK";
+    // Goldhawk's bills count once it is GST registered (its seller snapshot carries the GSTIN)
+    const isGoldhawk = inv.sellerSnapshot?.billingEntityCode === "GOLDHAWK" && !(inv.sellerSnapshot?.gstConfiguration?.enabled && inv.sellerSnapshot?.gstTaxId);
     if (!isGoldhawk) {
       taxableSales += (inv.taxableAmount || (inv.grandTotal - (inv.totalTax || 0)));
       const b = inv.gstBreakup || inv.gstSnapshot || {};
@@ -1100,6 +1182,7 @@ const buildAccountantExportXlsxBuffer = (pack) => {
 };
 
 module.exports = {
+  listCentres,
   getHistoricalWarning,
   getProfitAndLossReport,
   getBalanceSheetReport,

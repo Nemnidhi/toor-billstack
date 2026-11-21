@@ -67,17 +67,41 @@ const buildInvoiceTotals = ({
   };
 };
 
+// Indian financial year of a date as "26-27" (April to March, IST).
+const fyLabel = (date = new Date()) => {
+  const d = new Date(new Date(date).getTime() + 330 * 60 * 1000);
+  const start = d.getUTCMonth() >= 3 ? d.getUTCFullYear() : d.getUTCFullYear() - 1;
+  return `${String(start).slice(2)}-${String((start + 1) % 100).padStart(2, "0")}`;
+};
+
+// {YYYY} calendar year, {FY} financial year (26-27), {0001} the running number.
 const buildInvoiceNumber = ({ prefix, format, sequence, date = new Date() }) => {
   const year = String(date.getFullYear());
   const paddedSequence = String(sequence).padStart(4, "0");
 
   return format
     .replaceAll("{YYYY}", year)
+    .replaceAll("{FY}", fyLabel(date))
     .replaceAll("{0001}", paddedSequence)
     .replaceAll("INV", prefix || "INV");
 };
 
+// The number to use for an invoice dated `date`. A format with {FY} starts again at 1 when the
+// financial year changes (GST rule 46(b): a running series, unique within the year).
+const invoiceSequenceFor = (numbering = {}, date = new Date()) => {
+  const usesFy = /\{FY\}/.test(numbering?.format || "");
+  const fy = fyLabel(date);
+  if (usesFy && numbering?.sequenceFy && numbering.sequenceFy !== fy) return { sequence: 1, sequenceFy: fy };
+  return { sequence: numbering?.nextSequence || 1, sequenceFy: usesFy ? fy : numbering?.sequenceFy || "" };
+};
+
+// GST invoices: at most 16 characters, letters, digits, "-" and "/" only.
+const GST_INVOICE_NUMBER = /^[A-Za-z0-9/-]{1,16}$/;
+
 module.exports = {
+  GST_INVOICE_NUMBER,
+  fyLabel,
+  invoiceSequenceFor,
   buildInvoiceNumber,
   buildInvoiceTotals,
 };

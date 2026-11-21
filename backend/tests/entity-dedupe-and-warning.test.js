@@ -6,6 +6,9 @@ const Invoice = require("../src/models/Invoice");
 const Payment = require("../src/models/Payment");
 const Expense = require("../src/models/Expense");
 const JournalEntry = require("../src/models/JournalEntry");
+const Purchase = require("../src/models/Purchase");
+const CreditNote = require("../src/models/CreditNote");
+const SalesReturn = require("../src/models/SalesReturn");
 const { pickCanonicalEntities } = require("../src/services/billing-entity.service");
 const { getHistoricalWarning } = require("../src/services/accounting-reports.service");
 
@@ -51,15 +54,26 @@ test("accounting warning only counts records that are really missing journal ent
   const posted = oid();
   const missing = oid();
   const pay = oid();
+  const supplierPay = oid();
+  const refund = oid();
   const exp = oid();
   const queries = [];
   const restores = [
     stub(Invoice, "find", (query) => { queries.push(["invoice", query]); return lean([{ _id: posted }, { _id: missing }]); }),
-    stub(Payment, "find", (query) => { queries.push(["payment", query]); return lean([{ _id: pay }]); }),
+    stub(Payment, "find", (query) => { queries.push(["payment", query]); return lean([
+      { _id: pay, direction: "RECEIVED" },
+      { _id: supplierPay, direction: "PAID", supplierId: oid() },
+      { _id: refund, direction: "PAID", customerId: oid(), reversalOfPaymentId: pay },
+    ]); }),
     stub(Expense, "find", (query) => { queries.push(["expense", query]); return lean([{ _id: exp }]); }),
+    stub(Purchase, "find", () => lean([])),
+    stub(CreditNote, "find", () => lean([])),
+    stub(SalesReturn, "find", () => lean([])),
     stub(JournalEntry, "find", () => lean([
       { sourceKey: `INVOICE:${posted}:ISSUED` },
       { sourceKey: `PAYMENT:${pay}:RECEIVED` },
+      { sourceKey: `PAYMENT:${supplierPay}:PAID` },
+      { sourceKey: `PAYMENT_REVERSAL:${refund}` },
       { sourceKey: `EXPENSE:${exp}:RECORDED` },
     ])),
   ];
@@ -71,7 +85,7 @@ test("accounting warning only counts records that are really missing journal ent
       { invoices: 1, payments: 0, expenses: 0 }
     );
     const paymentQuery = queries.find(([kind]) => kind === "payment")[1];
-    assert.equal(paymentQuery.direction, "RECEIVED", "supplier payments never get receipt entries");
+    assert.equal(paymentQuery.direction, undefined, "receipts, supplier payments and refunds are all journaled, each under its own key");
     const invoiceQuery = queries.find(([kind]) => kind === "invoice")[1];
     assert.deepEqual(invoiceQuery.grandTotal, { $gt: 0 }, "zero-value invoices are not journaled");
   } finally {
@@ -85,6 +99,9 @@ test("accounting warning clears once every eligible record is posted", async () 
     stub(Invoice, "find", () => lean([{ _id: inv }])),
     stub(Payment, "find", () => lean([])),
     stub(Expense, "find", () => lean([])),
+    stub(Purchase, "find", () => lean([])),
+    stub(CreditNote, "find", () => lean([])),
+    stub(SalesReturn, "find", () => lean([])),
     stub(JournalEntry, "find", () => lean([{ sourceKey: `INVOICE:${inv}:ISSUED` }])),
   ];
   try {

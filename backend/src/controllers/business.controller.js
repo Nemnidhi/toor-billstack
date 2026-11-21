@@ -103,7 +103,14 @@ const updateBusinessSetup = asyncHandler(async (req, res) => {
   business.phone = req.body.phone?.trim() || "";
   business.address = req.body.address?.trim() || "";
   business.gstTaxId = req.body.gstTaxId?.trim().toUpperCase() || "";
-  const gstEnabled = business.billingEntityCode !== "GOLDHAWK" && (req.body.gstEnabled === true || req.body.gstEnabled === "true");
+  if (business.billingEntityCode === "GOLDHAWK" && req.body.gstRegisteredFrom !== undefined) {
+    // Goldhawk's GST registration (crossing Rs 20 lakh): the day it takes effect, or blank to undo
+    const from = req.body.gstRegisteredFrom ? new Date(req.body.gstRegisteredFrom) : null;
+    if (from && Number.isNaN(from.getTime())) throw new AppError("Enter the date GST registration takes effect", 400);
+    business.gstRegisteredFrom = from;
+  }
+  const gstAllowed = business.billingEntityCode !== "GOLDHAWK" || Boolean(business.gstRegisteredFrom);
+  const gstEnabled = gstAllowed && (req.body.gstEnabled === true || req.body.gstEnabled === "true");
   const gstin = (req.body.gstConfigurationGstin || req.body.gstTaxId || "").trim().toUpperCase();
   const stateCode = (req.body.gstStateCode || "").trim();
   try {
@@ -117,10 +124,23 @@ const updateBusinessSetup = asyncHandler(async (req, res) => {
     taxRate: Number(req.body.taxRate ?? 18),
     taxMode: req.body.taxMode || "exclusive",
   };
+  const numberingFormat = req.body.invoiceNumberingFormat?.trim() || "INV-{YYYY}-{0001}";
+  const numberingPrefix = req.body.invoicePrefix?.trim() || "INV";
+  {
+    // GST rule 46(b): a GST invoice number is at most 16 characters (letters, digits, - and /)
+    const { buildInvoiceNumber, GST_INVOICE_NUMBER } = require("../utils/invoice");
+    const sample = buildInvoiceNumber({ prefix: numberingPrefix, format: numberingFormat, sequence: 9999, date: new Date() });
+    // checked only when the series is changed, so a saved series never blocks other settings
+    const changed = numberingFormat !== (business.invoiceNumbering?.format || "INV-{YYYY}-{0001}") || numberingPrefix !== (business.invoiceNumbering?.prefix || "INV");
+    if (changed && business.gstConfiguration?.enabled && !GST_INVOICE_NUMBER.test(sample)) {
+      throw new AppError(`Invoice numbers like ${sample} are not allowed on GST invoices: at most 16 characters, letters, digits, "-" and "/" only.`, 400);
+    }
+  }
   business.invoiceNumbering = {
-    prefix: req.body.invoicePrefix?.trim() || "INV",
-    format: req.body.invoiceNumberingFormat?.trim() || "INV-{YYYY}-{0001}",
+    prefix: numberingPrefix,
+    format: numberingFormat,
     nextSequence: business.invoiceNumbering?.nextSequence || 1,
+    sequenceFy: business.invoiceNumbering?.sequenceFy || "",
   };
   business.bankDetails = {
     accountName: req.body.bankAccountName?.trim() || "",

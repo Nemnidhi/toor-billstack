@@ -571,6 +571,11 @@ export const createRecurringProfileRequest = async (payload) => {
   return response.data.data;
 };
 
+export const setRecurringCentreRequest = async (profileId, centre) => {
+  const response = await api.post(`/workflows/recurring/${profileId}/centre`, { centre });
+  return response.data.data;
+};
+
 export const updateRecurringStatusRequest = async (profileId, status) => {
   const response = await api.post(`/workflows/recurring/${profileId}/status`, { status });
   return response.data.data;
@@ -743,3 +748,12 @@ export const gstr1ExcelRequest = async (period) => {
   const response = await api.get("/gst/gstr1/export", { params: period, responseType: "blob" });
   return response.data;
 };
+
+// ---- GST buying side and GSTR-3B (books phase 3)
+export const gstr1JsonRequest = async (params) => (await api.get("/gst/gstr1/json", { params, responseType: "blob" })).data;
+export const itcRegisterRequest = async (params) => (await api.get("/gst/itc", { params })).data.data;
+export const import2bRequest = async (payload, params) => (await api.post("/gst/2b/import", payload, { params })).data.data;
+export const match2bRequest = async (params) => (await api.get("/gst/2b/match", { params })).data.data;
+export const setImsActionRequest = async (rowId, payload, params) => (await api.post(`/gst/2b/rows/${rowId}/ims`, payload, { params })).data.data;
+export const gstr3bRequest = async (params) => (await api.get("/gst/gstr3b", { params })).data.data;
+export const rcmDocumentsRequest = async (expenseId) => (await api.get(`/gst/rcm/${expenseId}/documents`)).data.data;

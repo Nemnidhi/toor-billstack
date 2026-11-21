@@ -5,6 +5,8 @@ import {
   listPurchasesRequest,
   listSuppliersRequest,
 } from "../../auth/api";
+import CentreInput, { forgetCentres } from "../../../components/ui/CentreInput";
+import DocumentsPanel from "../../../components/ui/DocumentsPanel";
 
 const initialItem = {
   productId: "",
@@ -31,12 +33,17 @@ const PurchasesPage = () => {
     paidAmount: 0,
     paymentStatus: "unpaid",
     purchaseDate: new Date().toISOString().slice(0, 10),
+    centre: "",
+    supplierInvoiceNumber: "",
+    supplierInvoiceDate: "",
+    itcEligible: true,
     productsPurchased: [initialItem],
   });
   const [errors, setErrors] = useState({});
   const [serverError, setServerError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [docsOpen, setDocsOpen] = useState("");
 
   const loadPurchases = async () => {
     setIsLoading(true);
@@ -108,6 +115,10 @@ const PurchasesPage = () => {
       paidAmount: 0,
       paymentStatus: "unpaid",
       purchaseDate: new Date().toISOString().slice(0, 10),
+      centre: "",
+      supplierInvoiceNumber: "",
+      supplierInvoiceDate: "",
+      itcEligible: true,
       productsPurchased: [initialItem],
     });
     setErrors({});
@@ -130,6 +141,7 @@ const PurchasesPage = () => {
 
     try {
       await createPurchaseRequest(form);
+      if (form.centre) forgetCentres();
       resetForm();
       await loadPurchases();
     } catch (error) {
@@ -186,6 +198,22 @@ const PurchasesPage = () => {
             <label className="block">
               <span className="mb-2 block text-sm text-slate-300">Purchase date</span>
               <input type="date" name="purchaseDate" value={form.purchaseDate} onChange={handleFormChange} className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white" />
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-sm text-slate-300">Supplier's bill number (for GSTR-2B matching)</span>
+              <input name="supplierInvoiceNumber" value={form.supplierInvoiceNumber} onChange={handleFormChange} className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white" />
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-sm text-slate-300">Supplier's bill date</span>
+              <input type="date" name="supplierInvoiceDate" value={form.supplierInvoiceDate} onChange={handleFormChange} className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white" />
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <input type="checkbox" checked={form.itcEligible !== false} onChange={(event) => setForm((current) => ({ ...current, itcEligible: event.target.checked }))} />
+              Claim input credit on this bill (untick for blocked credit, s.17(5))
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-sm text-slate-300">Centre / property (optional)</span>
+              <CentreInput value={form.centre} onChange={(value) => setForm((current) => ({ ...current, centre: value }))} className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white" />
             </label>
             <label className="block">
               <span className="mb-2 block text-sm text-slate-300">Paid amount</span>
@@ -273,6 +301,8 @@ const PurchasesPage = () => {
                     <p>Status: {purchase.paymentStatus}</p>
                     <p>Lines: {(purchase.productsPurchased || []).length}</p>
                   </div>
+                  <button type="button" onClick={() => setDocsOpen(docsOpen === purchase._id ? "" : purchase._id)} className="mt-3 rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-200">Documents{purchase.attachments?.length ? ` (${purchase.attachments.length})` : ""}</button>
+                  {docsOpen === purchase._id ? <DocumentsPanel recordType="purchase" recordId={purchase._id} documents={purchase.attachments || []} /> : null}
                 </div>
               ))}
               {!result.items.length ? <p className="text-sm text-slate-400">No purchases found.</p> : null}

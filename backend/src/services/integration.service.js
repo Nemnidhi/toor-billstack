@@ -12,7 +12,7 @@ const Product = require("../models/Product");
 const StockMovement = require("../models/StockMovement");
 const AppError = require("../utils/appError");
 const { buildGstSnapshot, validateGstin, validateStateCode } = require("../utils/gst");
-const { buildInvoiceNumber, buildInvoiceTotals } = require("../utils/invoice");
+const { buildInvoiceNumber, buildInvoiceTotals, invoiceSequenceFor } = require("../utils/invoice");
 const { toMinorUnits, fromMinorUnits } = require("../utils/money");
 const { dispatchInvoiceIssuedAutomation, sendInvoiceMessage } = require("./communication.service");
 const { allocatePayment, createPayment } = require("./payment.service");
@@ -480,8 +480,8 @@ const ingestExternalOrder = async ({ credential, payload }) => {
       const gstSnapshot = business.gstConfiguration?.enabled
         ? buildGstSnapshot({ business, counterparty: customer, lineItems: totals.lineItems, products, placeOfSupplyCode: normalized.customer.placeOfSupplyCode || normalized.customer.stateCode })
         : null;
-      const sequence = business.invoiceNumbering?.nextSequence || 1;
       const invoiceDate = normalized.payment.paidAt ? new Date(normalized.payment.paidAt) : new Date();
+      const { sequence, sequenceFy } = invoiceSequenceFor(business.invoiceNumbering, invoiceDate);
       const [invoice] = await Invoice.create(
         [{
           businessId: credential.businessId,
@@ -511,6 +511,7 @@ const ingestExternalOrder = async ({ credential, payload }) => {
       await accountingService.postInvoiceJournalEntry({ invoice, business, userId: credential.createdBy, session });
       await applyIntegrationInvoiceStock({ business, businessId: credential.businessId, invoiceId: invoice._id, lineItems: totals.lineItems, createdBy: credential.createdBy, session });
       business.invoiceNumbering.nextSequence = sequence + 1;
+      business.invoiceNumbering.sequenceFy = sequenceFy;
       await business.save({ session });
       event.customerId = customer._id;
       event.invoiceId = invoice._id;
