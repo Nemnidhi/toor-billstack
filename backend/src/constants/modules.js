@@ -80,6 +80,11 @@ const getDeploymentMode = () =>
     ? DEPLOYMENT_MODES.SELF_HOSTED
     : DEPLOYMENT_MODES.SAAS;
 
+// A self-hosted install belongs to one company: nobody on the internet may create a workspace on it.
+// Team members are added by the owner from Team. BILLSTACK_ALLOW_SIGNUP=true reopens it (first setup only).
+const isPublicSignupOpen = () =>
+  getDeploymentMode() !== DEPLOYMENT_MODES.SELF_HOSTED || process.env.BILLSTACK_ALLOW_SIGNUP === "true";
+
 module.exports = {
   BUSINESS_MODELS,
   DEPLOYMENT_MODES,
@@ -87,6 +92,7 @@ module.exports = {
   MODULE_STATES,
   coreModuleKeys,
   getDeploymentMode,
+  isPublicSignupOpen,
   moduleCatalog,
   presets,
 };

@@ -4,4 +4,7 @@ const schema = new mongoose.Schema({ businessId: { type: mongoose.Schema.Types.O
 schema.index({ businessId: 1, creditNoteNumber: 1 }, { unique: true });
 schema.index({ businessId: 1, sourceKey: 1 }, { unique: true, partialFilterExpression: { sourceKey: { $type: "string", $ne: "" } } });
 schema.pre(["findOneAndUpdate", "updateOne", "updateMany", "findOneAndDelete", "deleteOne", "deleteMany"], () => { throw new Error("Credit notes are immutable after issuance."); });
+// every change is kept in the edit log (books audit trail)
+schema.plugin(require("../utils/edit-log.plugin"), { model: "CreditNote", businessKey: "businessId" });
+
 module.exports = mongoose.model("CreditNote", schema);

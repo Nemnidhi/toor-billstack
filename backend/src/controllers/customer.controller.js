@@ -105,6 +105,8 @@ const getCustomerById = asyncHandler(async (req, res) => {
   });
 });
 
+const { normalizePan, normalizeTan, normalizeTdsKind } = require("../utils/tax-ids");
+
 const createCustomer = asyncHandler(async (req, res) => {
   const gst = normalizeCustomerGst(req.body);
   const customer = await Customer.create({
@@ -117,6 +119,8 @@ const createCustomer = asyncHandler(async (req, res) => {
     gstNumber: gst.gstNumber,
     stateCode: gst.stateCode,
     placeOfSupplyCode: gst.placeOfSupplyCode,
+    pan: normalizePan(req.body.pan),
+    tan: normalizeTan(req.body.tan),
     notes: req.body.notes?.trim() || "",
     invoiceHistory: Array.isArray(req.body.invoiceHistory) ? req.body.invoiceHistory : [],
   });
@@ -154,6 +158,8 @@ const updateCustomer = asyncHandler(async (req, res) => {
   customer.gstNumber = gst.gstNumber;
   customer.stateCode = gst.stateCode;
   customer.placeOfSupplyCode = gst.placeOfSupplyCode;
+  if (req.body.pan !== undefined) customer.pan = normalizePan(req.body.pan);
+  if (req.body.tan !== undefined) customer.tan = normalizeTan(req.body.tan);
   customer.notes = req.body.notes?.trim() || "";
 
   if (Array.isArray(req.body.invoiceHistory)) {

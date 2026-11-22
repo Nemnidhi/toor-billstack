@@ -4,6 +4,7 @@ import AuthCard from "../../../components/ui/AuthCard";
 import FormField from "../../../components/ui/FormField";
 import GoogleAuthButton from "../components/GoogleAuthButton";
 import { useAuth } from "../useAuth";
+import { useSignupOpen } from "../useSignupOpen";
 
 const initialForm = {
   name: "",
@@ -19,6 +20,7 @@ const RegisterPage = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { googleAuth, register } = useAuth();
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
+  const signupOpen = useSignupOpen(true);
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -62,6 +64,22 @@ const RegisterPage = () => {
       setIsSubmitting(false);
     }
   };
+
+  if (signupOpen === false) {
+    return (
+      <AuthCard title="Accounts are added by your administrator" subtitle="New accounts cannot be created from this page.">
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          Ask your administrator to add you from Team. You will get your sign-in details from them.
+        </p>
+        <p className="mt-4 text-sm text-slate-500">
+          Already have an account?{" "}
+          <Link to="/login" className="font-medium text-brand-700">
+            Sign in
+          </Link>
+        </p>
+      </AuthCard>
+    );
+  }
 
   return (
     <AuthCard

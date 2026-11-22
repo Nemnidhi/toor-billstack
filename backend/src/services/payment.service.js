@@ -15,6 +15,13 @@ const { log } = require("../utils/logger");
 const { dispatchPaymentRecordedAutomation } = require("./communication.service");
 const { createCustomerLedgerEntryOnce, createSupplierLedgerEntryOnce } = require("./ledger.service");
 const accountingService = require("./accounting.service");
+const TdsReceivable = require("../models/TdsReceivable");
+const { indianQuarterOf } = require("../constants/tds");
+const { normalizeTdsKind } = require("../utils/tax-ids");
+
+// What a payment settles: the money plus any TDS the customer deducted for us.
+const paymentGrossMinor = (payment) =>
+  toMinorUnits(payment.amount, "Payment amount") + Math.round((Number(payment.tdsAmount || 0) + Number.EPSILON) * 100);
 
 // ---------------------------------------------------------------------------
 // Helpers: net allocation accounting (session-aware, works inside transactions)
@@ -60,7 +67,7 @@ const ensurePaymentBalance = async ({ businessId, payment, session }) => {
           _id: payment._id,
           paymentId: payment._id,
           businessId,
-          totalMinor: toMinorUnits(payment.amount),
+          totalMinor: paymentGrossMinor(payment),
           allocatedMinor,
         }],
         { session }
@@ -94,6 +101,8 @@ const createPayment = async ({ businessId, userId, payload }) => {
   if (direction === "RECEIVED" && !payload.customerId) throw new AppError("A received payment requires a customer", 400);
   if (direction === "PAID" && !payload.supplierId) throw new AppError("A paid payment requires a supplier", 400);
   const amount = fromMinorUnits(toMinorUnits(payload.amount));
+  const tdsAmount = direction === "RECEIVED" && Number(payload.tdsAmount || 0) > 0 ? fromMinorUnits(toMinorUnits(payload.tdsAmount, "TDS amount")) : 0;
+  const tdsKind = tdsAmount > 0 ? normalizeTdsKind(payload.tdsKind) : "";
   const idempotencyKey = String(payload.idempotencyKey || "").trim();
   if (idempotencyKey) {
     const existing = await Payment.findOne({ businessId, idempotencyKey });
@@ -118,19 +127,26 @@ const createPayment = async ({ businessId, userId, payload }) => {
       if (payload.supplierId && !(await Supplier.findOne({ _id: payload.supplierId, businessId: { $in: allowedBusinessIds } }).session(session))) {
         throw new AppError("Supplier not found", 404);
       }
-      [payment] = await Payment.create([{ businessId, direction, amount, currency: payload.currency || "INR", paymentDate: payload.paymentDate ? new Date(payload.paymentDate) : new Date(), paymentMethod: payload.paymentMethod || "OTHER", referenceNumber: payload.referenceNumber || "", idempotencyKey, customerId: payload.customerId || null, supplierId: payload.supplierId || null, notes: payload.notes || "", createdBy: userId }], { session });
+      [payment] = await Payment.create([{ businessId, direction, amount, tdsAmount, tdsKind, currency: payload.currency || "INR", paymentDate: payload.paymentDate ? new Date(payload.paymentDate) : new Date(), paymentMethod: payload.paymentMethod || "OTHER", referenceNumber: payload.referenceNumber || "", idempotencyKey, customerId: payload.customerId || null, supplierId: payload.supplierId || null, notes: payload.notes || "", createdBy: userId }], { session });
       await PaymentBalance.create(
         [{
           _id: payment._id,
           paymentId: payment._id,
           businessId,
-          totalMinor: toMinorUnits(amount),
+          totalMinor: paymentGrossMinor(payment),
           allocatedMinor: 0,
         }],
         { session }
       );
+      if (tdsAmount > 0) {
+        const customer = await Customer.findById(payload.customerId).session(session).select("tan");
+        const period = indianQuarterOf(payment.paymentDate);
+        await TdsReceivable.create([{ businessId, paymentId: payment._id, customerId: payment.customerId, tdsKind, amount: tdsAmount, grossAmount: fromMinorUnits(paymentGrossMinor(payment)), deductedOn: payment.paymentDate, fy: period.fy, quarter: period.quarter, deductorTan: customer?.tan || "" }], { session });
+      }
       if (payment.direction === "RECEIVED") {
         await accountingService.postPaymentReceivedJournalEntry({ payment, userId, session });
+      } else {
+        await accountingService.postPaymentPaidJournalEntry({ payment, userId, session });
       }
     });
     return payment;
@@ -184,7 +200,7 @@ const allocatePayment = async ({ businessId, userId, paymentId, payload }) => {
         {
           _id: payment._id,
           businessId,
-          allocatedMinor: { $lte: toMinorUnits(payment.amount) - amountMinor },
+          allocatedMinor: { $lte: paymentGrossMinor(payment) - amountMinor },
         },
         {
           $inc: { allocatedMinor: amountMinor },
@@ -301,6 +317,7 @@ const allocatePayment = async ({ businessId, userId, paymentId, payload }) => {
           { businessId, supplierId: purchase.supplierId, eventType: "PAYMENT", amount, direction: "CREDIT", purchaseId: purchase._id, allocationId: allocation._id, sourceKey: `PAYMENT_ALLOCATION:${allocation._id}`, referenceNumber: payment.referenceNumber, notes: "Payment allocation", createdBy: userId },
           { session }
         );
+        await accountingService.postPurchaseAllocationJournalEntry({ allocation, userId, session });
       }
     });
 
@@ -322,7 +339,7 @@ const getPayment = async ({ businessId, paymentId }) => {
   const payment = await Payment.findOne({ _id: paymentId, businessId }).populate("customerId", "name").populate("supplierId", "supplierName");
   if (!payment) return null;
   const allocatedMinor = await netPaymentAllocations({ businessId, paymentId: payment._id });
-  const totalMinor = toMinorUnits(payment.amount, "Payment amount");
+  const totalMinor = paymentGrossMinor(payment);
   const unallocatedMinor = Math.max(totalMinor - allocatedMinor, 0);
   const plain = typeof payment.toObject === "function" ? payment.toObject() : payment;
   plain.allocatedAmount = fromMinorUnits(allocatedMinor);
@@ -346,7 +363,7 @@ const listPayments = async ({ businessId, query = {} }) => {
   const payments = await Payment.find(filter).sort({ paymentDate: -1, createdAt: -1 }).populate("customerId", "name").populate("supplierId", "supplierName");
   return Promise.all(payments.map(async (payment) => {
     const allocatedMinor = await netPaymentAllocations({ businessId, paymentId: payment._id });
-    const totalMinor = toMinorUnits(payment.amount, "Payment amount");
+    const totalMinor = paymentGrossMinor(payment);
     const unallocatedMinor = Math.max(totalMinor - allocatedMinor, 0);
     const plain = typeof payment.toObject === "function" ? payment.toObject() : payment;
     plain.allocatedAmount = fromMinorUnits(allocatedMinor);
@@ -378,12 +395,13 @@ const getCustomerAdvances = async ({ businessId, customerId }) => {
   let totalUnallocatedMinor = 0;
   const result = await Promise.all(payments.map(async (payment) => {
     const usedMinor = await netPaymentAllocations({ businessId, paymentId: payment._id });
-    const totalMinor = toMinorUnits(payment.amount, "Payment amount");
+    const totalMinor = paymentGrossMinor(payment);
     const unallocatedMinor = Math.max(totalMinor - usedMinor, 0);
     totalUnallocatedMinor += unallocatedMinor;
     return {
       paymentId: payment._id,
       amount: payment.amount,
+      tdsAmount: payment.tdsAmount || 0,
       unallocatedAmount: fromMinorUnits(unallocatedMinor),
       paymentDate: payment.paymentDate,
       referenceNumber: payment.referenceNumber,
@@ -414,7 +432,7 @@ const reversePayment = async ({ businessId, userId, paymentId, reason = "" }) =>
       const counterDirection = payment.direction === "RECEIVED" ? "PAID" : "RECEIVED";
       const notes = reason ? ("Reversal of payment " + payment._id + ": " + reason) : ("Reversal of payment " + payment._id);
       [reversal] = await Payment.create(
-        [{ businessId, direction: counterDirection, amount: payment.amount, currency: payment.currency || "INR", paymentDate: new Date(), paymentMethod: payment.paymentMethod || "OTHER", referenceNumber: "REFUND:" + (payment.referenceNumber || payment._id), customerId: payment.customerId || null, supplierId: payment.supplierId || null, reversalOfPaymentId: payment._id, notes, createdBy: userId }],
+        [{ businessId, direction: counterDirection, amount: payment.amount, tdsAmount: payment.tdsAmount || 0, tdsKind: payment.tdsKind || "", currency: payment.currency || "INR", paymentDate: new Date(), paymentMethod: payment.paymentMethod || "OTHER", referenceNumber: "REFUND:" + (payment.referenceNumber || payment._id), customerId: payment.customerId || null, supplierId: payment.supplierId || null, reversalOfPaymentId: payment._id, notes, createdBy: userId }],
         { session }
       );
       await PaymentBalance.create(
@@ -422,16 +440,20 @@ const reversePayment = async ({ businessId, userId, paymentId, reason = "" }) =>
           _id: reversal._id,
           paymentId: reversal._id,
           businessId,
-          totalMinor: toMinorUnits(payment.amount),
+          totalMinor: paymentGrossMinor(payment),
           allocatedMinor: 0,
         }],
         { session }
       );
+      if (Number(payment.tdsAmount || 0) > 0) {
+        await TdsReceivable.updateOne({ businessId, paymentId: payment._id }, { $set: { status: "REVERSED" } }, { session });
+      }
       if (payment.customerId) {
         await createCustomerLedgerEntryOnce({ businessId, customerId: payment.customerId, eventType: "REFUND", amount: payment.amount, direction: "DEBIT", paymentId: reversal._id, sourceKey: "PAYMENT_REVERSAL:" + reversal._id, notes, createdBy: userId }, { session });
         await accountingService.postPaymentReversalJournalEntry({ reversalPayment: reversal, originalPayment: payment, userId, session });
       } else if (payment.supplierId) {
         await createSupplierLedgerEntryOnce({ businessId, supplierId: payment.supplierId, eventType: "REFUND", amount: payment.amount, direction: "CREDIT", paymentId: reversal._id, sourceKey: "PAYMENT_REVERSAL:" + reversal._id, notes, createdBy: userId }, { session });
+        await accountingService.postPaymentReversalJournalEntry({ reversalPayment: reversal, originalPayment: payment, userId, session });
       }
     });
     return reversal;
@@ -506,8 +528,17 @@ const reverseAllocation = async ({ businessId, userId, allocationId, amount, rea
           await accountingService.postPaymentAllocationReversalJournalEntry({ reversal, allocation, payment, userId, session });
         }
       } else if (allocation.purchaseId) {
-        const purchase = await Purchase.findOne({ _id: allocation.purchaseId, businessId }).select("supplierId").session(session);
-        if (purchase) await createSupplierLedgerEntryOnce({ businessId, supplierId: purchase.supplierId, eventType: "REVERSAL", amount: requested, direction: "DEBIT", purchaseId: purchase._id, reversalId: reversal._id, sourceKey: `PAYMENT_ALLOCATION_REVERSAL:${reversal._id}`, notes: reason, createdBy: userId }, { session });
+        const purchase = await Purchase.findOne({ _id: allocation.purchaseId, businessId }).session(session);
+        if (purchase) {
+          // The bill is owed again: bring its paid amount and status back in line.
+          const paidMinor = await netDocumentAllocations({ businessId, documentKey: "purchaseId", documentId: purchase._id, session });
+          const totalMinor = toMinorUnits(purchase.totalAmount, "Purchase total amount", { allowZero: true });
+          purchase.paidAmount = fromMinorUnits(Math.min(paidMinor, totalMinor));
+          purchase.paymentStatus = paidMinor >= totalMinor && totalMinor > 0 ? "paid" : paidMinor > 0 ? "partial" : "unpaid";
+          await purchase.save({ session });
+          await createSupplierLedgerEntryOnce({ businessId, supplierId: purchase.supplierId, eventType: "REVERSAL", amount: requested, direction: "DEBIT", purchaseId: purchase._id, reversalId: reversal._id, sourceKey: `PAYMENT_ALLOCATION_REVERSAL:${reversal._id}`, notes: reason, createdBy: userId }, { session });
+          await accountingService.postPurchaseAllocationReversalJournalEntry({ reversal, allocation, userId, session });
+        }
       }
     });
     return reversal;

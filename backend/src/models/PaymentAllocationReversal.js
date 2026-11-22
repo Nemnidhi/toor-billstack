@@ -8,4 +8,7 @@ const schema = new mongoose.Schema({
 }, { timestamps: true });
 schema.index({ businessId: 1, allocationId: 1 }, { unique: true });
 schema.pre(["findOneAndUpdate", "updateOne", "updateMany", "findOneAndDelete", "deleteOne", "deleteMany"], () => { throw new Error("Allocation reversals are append-only."); });
+// every change is kept in the edit log (books audit trail)
+schema.plugin(require("../utils/edit-log.plugin"), { model: "PaymentAllocationReversal", businessKey: "businessId" });
+
 module.exports = mongoose.model("PaymentAllocationReversal", schema);

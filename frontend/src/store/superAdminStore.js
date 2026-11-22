@@ -5,8 +5,20 @@ const persistedSession = (() => {
     return null;
   }
 
-  const raw = localStorage.getItem("billstack-super-admin");
-  return raw ? JSON.parse(raw) : null;
+  // A damaged or half-written saved session (or blocked storage) must not stop
+  // the app from starting: forget it and show the sign-in page.
+  try {
+    const raw = localStorage.getItem("billstack-super-admin");
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    try {
+      localStorage.removeItem("billstack-super-admin");
+    } catch {
+      /* storage unavailable */
+    }
+    return null;
+  }
 })();
 
 export const superAdminStore = create((set) => ({

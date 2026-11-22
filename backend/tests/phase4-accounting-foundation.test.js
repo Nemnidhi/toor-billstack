@@ -386,7 +386,7 @@ test("Expense posting: TOOR records input GST, Goldhawk records ZERO GST", async
   assert.equal(toorEntry.totalCreditMinor, 1180000);
 
   // Dr General Expenses 10,000
-  const expLine = toorEntry.lines.find((l) => l.accountCode === "5010");
+  const expLine = toorEntry.lines.find((l) => l.accountCode === "5080"); // Office Supplies posts to its own head (5080) since books phase 1
   assert.equal(expLine.debitMinor, 1000000);
 
   // Dr Input CGST 900, Dr Input SGST 900

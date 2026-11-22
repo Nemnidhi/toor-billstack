@@ -188,7 +188,16 @@ const invoiceCreateValidator = (body) => {
   };
 };
 
-const invoiceUpdateValidator = invoiceCreateValidator;
+// A save of only notes / terms / centre (e.g. booking a paid invoice to a centre) is not a full edit.
+const INVOICE_TEXT_FIELDS = ["notes", "termsAndConditions", "centre"];
+const invoiceUpdateValidator = (body = {}) => {
+  const keys = Object.keys(body || {});
+  if (keys.length && keys.every((key) => INVOICE_TEXT_FIELDS.includes(key))) {
+    const errors = String(body.centre || "").length > 80 ? { centre: "Centre must be 80 characters or fewer" } : {};
+    return { valid: Object.keys(errors).length === 0, errors };
+  }
+  return invoiceCreateValidator(body);
+};
 
 const teamMemberCreateValidator = (body) => {
   const errors = {};

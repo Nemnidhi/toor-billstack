@@ -6,6 +6,8 @@ import {
   listSuppliersRequest,
   updateSupplierRequest,
 } from "../../auth/api";
+import { TDS_KINDS } from "../../../components/ui/TdsFields";
+import DocumentsPanel from "../../../components/ui/DocumentsPanel";
 
 const initialForm = {
   supplierName: "",
@@ -13,6 +15,13 @@ const initialForm = {
   email: "",
   address: "",
   gstNumber: "",
+  pan: "",
+  tdsKind: "",
+  tdsRate: "",
+  msmeType: "",
+  udyamNumber: "",
+  msmeTrader: "false",
+  msmeCreditDays: "",
   productsSupplied: [],
   notes: "",
   paymentStatus: "unpaid",
@@ -31,6 +40,7 @@ const SuppliersPage = () => {
   const [productOptions, setProductOptions] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [editingId, setEditingId] = useState("");
+  const [docsOpen, setDocsOpen] = useState("");
   const [errors, setErrors] = useState({});
   const [serverError, setServerError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -90,6 +100,13 @@ const SuppliersPage = () => {
       email: supplier.email || "",
       address: supplier.address || "",
       gstNumber: supplier.gstNumber || "",
+      pan: supplier.pan || "",
+      tdsKind: supplier.tdsKind || "",
+      tdsRate: supplier.tdsRate ?? "",
+      msmeType: supplier.msmeType || "",
+      udyamNumber: supplier.udyamNumber || "",
+      msmeTrader: supplier.msmeTrader ? "true" : "false",
+      msmeCreditDays: supplier.msmeCreditDays || "",
       productsSupplied: (supplier.productsSupplied || []).map((item) => item._id || item),
       notes: supplier.notes || "",
       paymentStatus: supplier.paymentStatus || "unpaid",
@@ -170,6 +187,7 @@ const SuppliersPage = () => {
               ["email", "Email"],
               ["address", "Address"],
               ["gstNumber", "GST number"],
+              ["pan", "PAN (needed for TDS; without it TDS is 20%)"],
             ].map(([name, label]) => (
               <label key={name} className="block">
                 <span className="mb-2 block text-sm text-slate-300">{label}</span>
@@ -177,6 +195,47 @@ const SuppliersPage = () => {
                 {errors[name] ? <span className="mt-2 block text-xs text-rose-400">{errors[name]}</span> : null}
               </label>
             ))}
+            <label className="block">
+              <span className="mb-2 block text-sm text-slate-300">TDS we deduct when paying them</span>
+              <select name="tdsKind" value={form.tdsKind} onChange={handleFormChange} className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white">
+                <option value="">No TDS</option>
+                {TDS_KINDS.map((kind) => <option key={kind.key} value={kind.key}>{kind.label}</option>)}
+              </select>
+            </label>
+            {form.tdsKind ? (
+              <label className="block">
+                <span className="mb-2 block text-sm text-slate-300">Their TDS rate % (blank = usual; set only for a lower-deduction certificate)</span>
+                <input name="tdsRate" type="number" min="0" max="100" step="0.01" value={form.tdsRate} onChange={handleFormChange} className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white" />
+              </label>
+            ) : null}
+            <label className="block">
+              <span className="mb-2 block text-sm text-slate-300">MSME (Udyam) status</span>
+              <select name="msmeType" value={form.msmeType} onChange={handleFormChange} className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white">
+                <option value="">Not MSME / not known</option>
+                <option value="MICRO">Micro</option>
+                <option value="SMALL">Small</option>
+                <option value="MEDIUM">Medium</option>
+              </select>
+            </label>
+            {form.msmeType ? (
+              <>
+                <label className="block">
+                  <span className="mb-2 block text-sm text-slate-300">Udyam registration number</span>
+                  <input name="udyamNumber" value={form.udyamNumber} onChange={handleFormChange} placeholder="UDYAM-MP-00-0000000" className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white" />
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-sm text-slate-300">Credit days agreed in writing (max 45; blank = 15 days)</span>
+                  <input name="msmeCreditDays" type="number" min="0" max="45" value={form.msmeCreditDays} onChange={handleFormChange} className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white" />
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-sm text-slate-300">Registered as a trader (wholesale / retail)?</span>
+                  <select name="msmeTrader" value={form.msmeTrader} onChange={handleFormChange} className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white">
+                    <option value="false">No: the 45-day rule applies</option>
+                    <option value="true">Yes: trader, outside s.43B(h)</option>
+                  </select>
+                </label>
+              </>
+            ) : null}
             <label className="block">
               <span className="mb-2 block text-sm text-slate-300">Products supplied</span>
               <select name="productsSupplied" multiple value={form.productsSupplied} onChange={handleFormChange} className="min-h-32 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white">
@@ -235,10 +294,12 @@ const SuppliersPage = () => {
                       </div>
                     </div>
                     <div className="flex gap-2">
+                      <button onClick={() => setDocsOpen(docsOpen === supplier._id ? "" : supplier._id)} className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-200">Documents{supplier.attachments?.length ? ` (${supplier.attachments.length})` : ""}</button>
                       <button onClick={() => handleEdit(supplier)} className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-200">Edit</button>
                       <button onClick={() => handleDelete(supplier._id)} className="rounded-xl border border-rose-500/40 px-4 py-2 text-sm text-rose-300">Delete</button>
                     </div>
                   </div>
+                  {docsOpen === supplier._id ? <DocumentsPanel recordType="supplier" recordId={supplier._id} documents={supplier.attachments || []} defaultKind="AGREEMENT" kinds={["AGREEMENT", "CERTIFICATE", "OTHER"]} /> : null}
                 </div>
               ))}
               {!result.items.length ? <p className="text-sm text-slate-400">No suppliers found.</p> : null}

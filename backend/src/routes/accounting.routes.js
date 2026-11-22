@@ -8,6 +8,7 @@ const {
 } = require("../controllers/accounting.controller");
 const {
   getProfitAndLoss,
+  getCentres,
   getBalanceSheet,
   getBankBook,
   getCashBook,
@@ -25,6 +26,10 @@ const {
   confirmReconciliationMatch,
   unmatchReconciliation,
 } = require("../controllers/bank-reconciliation.controller");
+const tds = require("../controllers/tds.controller");
+const controls = require("../controllers/controls.controller");
+const yearEnd = require("../controllers/year-end.controller");
+const payroll = require("../controllers/payroll.controller");
 const authMiddleware = require("../middlewares/auth.middleware");
 const { permit } = require("../middlewares/role.middleware");
 const { authorizeAccountingReport } = require("../middlewares/accounting-access.middleware");
@@ -44,6 +49,7 @@ router.post("/journal-entries/manual", permit("owner", "admin", "accountant"), p
 
 // Accountant Financial Reports (Entity-scoped, Consolidated, Indian FY & Export)
 router.get("/reports/profit-loss", authorizeAccountingReport, getProfitAndLoss);
+router.get("/centres", getCentres);
 router.get("/reports/balance-sheet", authorizeAccountingReport, getBalanceSheet);
 router.get("/reports/bank-book", authorizeAccountingReport, getBankBook);
 router.get("/reports/cash-book", authorizeAccountingReport, getCashBook);
@@ -64,5 +70,54 @@ router.post("/bank-statements/import", authorizeAccountingReport, importBankStat
 router.get("/bank-reconciliation", authorizeAccountingReport, getReconciliation);
 router.post("/bank-reconciliation/match", authorizeAccountingReport, confirmReconciliationMatch);
 router.post("/bank-reconciliation/unmatch", authorizeAccountingReport, unmatchReconciliation);
+
+// TDS: deducted by customers (receivable, 26AS) and deducted by us (payable, challans, returns)
+router.get("/tds/meta", tds.getMeta);
+router.get("/tds/receivable", authorizeAccountingReport, tds.getReceivable);
+router.patch("/tds/receivable/:id", authorizeAccountingReport, tds.updateReceivable);
+router.post("/tds/26as/import", authorizeAccountingReport, tds.import26as);
+router.get("/tds/payable", authorizeAccountingReport, tds.getPayable);
+router.get("/tds/challans", authorizeAccountingReport, tds.getChallans);
+router.post("/tds/challans", authorizeAccountingReport, tds.createChallan);
+router.post("/tds/challans/:id/cancel", authorizeAccountingReport, tds.cancelChallan);
+router.get("/tds/form140", authorizeAccountingReport, tds.getForm140);
+router.get("/tds/form131", authorizeAccountingReport, tds.getForm131);
+
+// Controls: period lock, edit log (rule 3(1) audit trail), Goldhawk GST registration watch
+router.get("/period-lock", authorizeAccountingReport, controls.getPeriodLock);
+router.put("/period-lock", authorizeAccountingReport, controls.setPeriodLock);
+router.get("/edit-log", authorizeAccountingReport, controls.getEditLog);
+router.get("/edit-log/export", authorizeAccountingReport, controls.exportEditLog);
+// Year end: deposits, fixed assets and depreciation, Schedule III, MSME 45-day, GSTR-9, Tally
+router.get("/deposits", authorizeAccountingReport, yearEnd.listDeposits);
+router.post("/deposits", authorizeAccountingReport, yearEnd.createDeposit);
+router.post("/deposits/:id/movements", authorizeAccountingReport, yearEnd.moveDeposit);
+router.post("/deposits/:id/cancel", authorizeAccountingReport, yearEnd.cancelDeposit);
+router.get("/fixed-assets/classes", yearEnd.assetClasses);
+router.get("/fixed-assets", authorizeAccountingReport, yearEnd.listAssets);
+router.post("/fixed-assets", authorizeAccountingReport, yearEnd.createAsset);
+router.get("/fixed-assets/register", authorizeAccountingReport, yearEnd.assetRegister);
+router.get("/fixed-assets/it-blocks", authorizeAccountingReport, yearEnd.itBlocks);
+router.post("/fixed-assets/depreciation", authorizeAccountingReport, yearEnd.runDepreciation);
+router.post("/fixed-assets/:id/dispose", authorizeAccountingReport, yearEnd.disposeAsset);
+router.post("/fixed-assets/:id/cancel", authorizeAccountingReport, yearEnd.cancelAsset);
+router.get("/year-end/schedule-iii", authorizeAccountingReport, yearEnd.scheduleIII);
+router.get("/year-end/msme", authorizeAccountingReport, yearEnd.msme);
+router.get("/year-end/gstr9", authorizeAccountingReport, yearEnd.gstr9);
+router.get("/year-end/tally", authorizeAccountingReport, yearEnd.tally);
+
+// Payroll: salary sheets finalised in the CRM, posted, paid and their dues; staff advances
+router.get("/payroll/runs", authorizeAccountingReport, payroll.listRuns);
+router.get("/payroll/runs/:id", authorizeAccountingReport, payroll.getRun);
+router.get("/payroll/runs/:id/register", authorizeAccountingReport, payroll.register);
+router.put("/payroll/runs/:id/deduction-map", authorizeAccountingReport, payroll.setDeductionMap);
+router.post("/payroll/runs/:id/post", authorizeAccountingReport, payroll.postRun);
+router.post("/payroll/runs/:id/unpost", authorizeAccountingReport, payroll.unpostRun);
+router.post("/payroll/runs/:id/pay", authorizeAccountingReport, payroll.payRun);
+router.post("/payroll/runs/:id/dues", authorizeAccountingReport, payroll.payDues);
+router.get("/payroll/advances", authorizeAccountingReport, payroll.advances);
+router.post("/payroll/advances", authorizeAccountingReport, payroll.giveAdvance);
+router.post("/payroll/advances/:id/cancel", authorizeAccountingReport, payroll.cancelAdvance);
+router.get("/goldhawk-watch", permit("owner", "admin", "accountant"), controls.getGoldhawkWatch);
 
 module.exports = router;

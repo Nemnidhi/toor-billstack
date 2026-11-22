@@ -163,6 +163,8 @@ const invoiceSchema = new mongoose.Schema(
       default: "unpaid",
     },
     notes: { type: String, trim: true, default: "" },
+    // Property / centre this belongs to (profit by location). Free text, blank = not assigned.
+    centre: { type: String, trim: true, maxlength: 80, default: "" },
     termsAndConditions: { type: String, trim: true, default: "" },
     status: {
       type: String,
@@ -203,8 +205,12 @@ invoiceSchema.pre("save", async function () {
   if (this.isNew) {
     if (business) this.sellerSnapshot = require("../services/seller-snapshot.service").sellerSnapshot(business);
   }
-  if (business?.billingEntityCode === "GOLDHAWK" && (this.totalTax !== 0 || this.lineItems.some(line => line.taxRate || line.tax || line.taxAmount) || this.gstSnapshot)) {
+  const goldhawkNoGst = business?.billingEntityCode === "GOLDHAWK" && !(business.gstRegisteredFrom && business.gstConfiguration?.enabled && business.gstConfiguration?.gstin);
+  if (goldhawkNoGst && (this.totalTax !== 0 || this.lineItems.some(line => line.taxRate || line.tax || line.taxAmount) || this.gstSnapshot)) {
     throw new Error("Goldhawk invoices must not contain GST");
   }
 });
+// every change is kept in the edit log (books audit trail)
+invoiceSchema.plugin(require("../utils/edit-log.plugin"), { model: "Invoice", businessKey: "businessId" });
+
 module.exports = mongoose.model("Invoice", invoiceSchema);

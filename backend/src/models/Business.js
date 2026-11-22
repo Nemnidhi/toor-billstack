@@ -67,6 +67,8 @@ const invoiceNumberingSchema = new mongoose.Schema(
       type: Number,
       default: 1,
     },
+    // financial year the sequence belongs to ("26-27"), for formats with {FY}: a new year restarts at 1
+    sequenceFy: { type: String, trim: true, default: "" },
   },
   { _id: false }
 );
@@ -183,6 +185,15 @@ const businessSchema = new mongoose.Schema(
       default: "",
     },
     gstConfiguration: { gstin: { type: String, default: "" }, stateCode: { type: String, default: "" }, state: { type: String, default: "" }, enabled: { type: Boolean, default: false } },
+    // Goldhawk only: the day its GST registration takes effect. Until it is set Goldhawk bills
+    // without GST; once set (with a GSTIN) GST can be turned on in its settings.
+    gstRegisteredFrom: { type: Date, default: null },
+    // Books closed up to this day (IST, YYYY-MM-DD): nothing can be posted on or before it.
+    booksLock: {
+      lockedUpTo: { type: String, default: "", match: /^(\d{4}-\d{2}-\d{2})?$/ },
+      lockedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+      lockedAt: { type: Date, default: null },
+    },
     bankDetails: {
       type: bankDetailsSchema,
       default: () => ({}),
@@ -271,7 +282,7 @@ const businessSchema = new mongoose.Schema(
 
 businessSchema.index({ billingParentId: 1, billingEntityCode: 1 }, { unique: true, partialFilterExpression: { billingParentId: { $type: "objectId" } } });
 businessSchema.pre("save", async function () {
-  if (this.billingEntityCode === "GOLDHAWK") {
+  if (this.billingEntityCode === "GOLDHAWK" && !this.gstRegisteredFrom) {
     this.gstConfiguration = { enabled: false, gstin: "", stateCode: "", state: "" };
     this.gstTaxId = "";
     this.businessProfile.gstRegistered = false;
@@ -283,4 +294,7 @@ businessSchema.pre("save", async function () {
     if (previous) await require("../services/seller-snapshot.service").freezeLegacySellers(previous, this.$session());
   }
 });
+// every change is kept in the edit log (books audit trail)
+businessSchema.plugin(require("../utils/edit-log.plugin"), { model: "Business", businessKey: "_id" });
+
 module.exports = mongoose.model("Business", businessSchema);

@@ -43,6 +43,7 @@ const authMiddleware = asyncHandler(async (req, _res, next) => {
     planCode: business?.planCode || "free",
   });
   req.business = business;
+  require("../utils/request-context").setUser(req.user);
   next();
 });
 

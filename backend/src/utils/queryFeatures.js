@@ -16,15 +16,17 @@ const buildSort = (sortBy, sortOrder, allowedFields, fallback = "-createdAt") =>
 };
 
 const buildSearchFilter = (search, fields) => {
-  if (!search || !search.trim()) {
+  const regex = searchRegex(search);
+  if (!regex) {
     return {};
   }
 
-  const regex = new RegExp(search.trim(), "i");
   return {
     $or: fields.map((field) => ({ [field]: regex })),
   };
 };
+
+const { searchRegex } = require("./search");
 
 const buildPaginatedResponse = ({ items, total, page, limit }) => ({
   items,

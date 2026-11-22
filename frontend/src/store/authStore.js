@@ -6,8 +6,20 @@ const persistedSession = (() => {
     return null;
   }
 
-  const raw = localStorage.getItem("billstack-auth");
-  return raw ? JSON.parse(raw) : null;
+  // A damaged or half-written saved session (or blocked storage) must not stop
+  // the app from starting: forget it and show the sign-in page.
+  try {
+    const raw = localStorage.getItem("billstack-auth");
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    try {
+      localStorage.removeItem("billstack-auth");
+    } catch {
+      /* storage unavailable */
+    }
+    return null;
+  }
 })();
 
 export const authStore = create((set) => ({

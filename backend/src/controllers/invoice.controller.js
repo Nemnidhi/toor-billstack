@@ -14,9 +14,10 @@ const { sendInvoiceEmail } = require("../services/email.service");
 const { dispatchInvoiceIssuedAutomation } = require("../services/communication.service");
 const { buildInventoryFlags } = require("../services/inventory.service");
 const { generateInvoicePdfBuffer } = require("../utils/pdfInvoice");
-const { buildInvoiceNumber, buildInvoiceTotals } = require("../utils/invoice");
+const { buildInvoiceNumber, buildInvoiceTotals, invoiceSequenceFor } = require("../utils/invoice");
 const { buildGstSnapshot, validateGstin, validateStateCode } = require("../utils/gst");
-const { createCustomerLedgerEntryOnce } = require("../services/ledger.service");
+const { createCustomerLedgerEntryOnce, rebookInvoiceReceivable } = require("../services/ledger.service");
+const { writeAuditLog } = require("../services/audit.service");
 const accountingService = require("../services/accounting.service");
 const { log } = require("../utils/logger");
 const paymentService = require("../services/payment.service");
@@ -385,8 +386,8 @@ const createInvoice = asyncHandler(async (req, res) => {
         amountPaid: req.body.amountPaid,
       });
 
-      const sequence = business.invoiceNumbering?.nextSequence || 1;
       const invoiceDate = req.body.invoiceDate ? new Date(req.body.invoiceDate) : new Date();
+      const { sequence, sequenceFy } = invoiceSequenceFor(business.invoiceNumbering, invoiceDate);
 
       // Same customer, same billing month, same item or same total: hold the invoice unless
       // the user has confirmed it is a separate charge. Applies to manual and CRM invoices.
@@ -450,6 +451,7 @@ const createInvoice = asyncHandler(async (req, res) => {
             balanceDue: totals.balanceDue,
             paymentStatus: totals.paymentStatus,
             notes: req.body.notes?.trim() || "",
+            centre: String(req.body.centre || "").trim().slice(0, 80),
             termsAndConditions: req.body.termsAndConditions?.trim() || "",
             gstSnapshot,
             gstBreakup: gstSnapshot ? { cgst: gstSnapshot.cgst, sgst: gstSnapshot.sgst, utgst: gstSnapshot.utgst, igst: gstSnapshot.igst, taxableValue: gstSnapshot.taxableValue, hsnSacSummary: gstSnapshot.hsnSacSummary } : undefined,
@@ -465,6 +467,7 @@ const createInvoice = asyncHandler(async (req, res) => {
       await createCustomerLedgerEntryOnce({ businessId: req.tenant.businessId, customerId: customer._id, eventType: "INVOICE", amount: invoice.grandTotal, direction: "DEBIT", invoiceId: invoice._id, sourceKey: `INVOICE:${invoice._id}:DEBIT`, createdBy: req.user._id }, { session });
       await accountingService.postInvoiceJournalEntry({ invoice, business, userId: req.user._id, session });
       business.invoiceNumbering.nextSequence = sequence + 1;
+      business.invoiceNumbering.sequenceFy = sequenceFy;
       await business.save({ session });
 
       await applyInvoiceStockDelta({
@@ -510,9 +513,11 @@ const createInvoice = asyncHandler(async (req, res) => {
 
 const updateInvoice = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
+  let editAudit = null;
 
   try {
     await session.withTransaction(async () => {
+      editAudit = null;
       const invoice = await Invoice.findOne({
         _id: req.params.invoiceId,
         businessId: req.tenant.businessId,
@@ -539,14 +544,30 @@ const updateInvoice = asyncHandler(async (req, res) => {
       if (!updateDecision.allowed) {
         throw new AppError("Invoices with payment allocations cannot have financial values changed.", 400);
       }
-      if (allocationsExist) {
+      const textOnly = Object.keys(req.body || {}).every((key) => ["notes", "termsAndConditions", "centre"].includes(key));
+      if (allocationsExist || textOnly) {
         if (req.body.notes !== undefined) invoice.notes = req.body.notes?.trim() || "";
         if (req.body.termsAndConditions !== undefined) invoice.termsAndConditions = req.body.termsAndConditions?.trim() || "";
+        const previousCentre = invoice.centre || "";
+        if (req.body.centre !== undefined) invoice.centre = String(req.body.centre || "").trim().slice(0, 80);
         await invoice.save({ session });
+        if (invoice.status === "issued" && (invoice.centre || "") !== previousCentre) {
+          // Moving the invoice to another centre moves its income there too.
+          const centreBusiness = await Business.findById(req.tenant.businessId).session(session);
+          const centreEditKey = new mongoose.Types.ObjectId().toString();
+          await accountingService.repostEditedInvoiceJournalEntry({ invoice, business: centreBusiness, previousInvoiceDate: invoice.invoiceDate, editKey: centreEditKey, userId: req.user._id, session });
+          await accountingService.resyncInvoiceCredits({ invoice, business: centreBusiness, editKey: centreEditKey, userId: req.user._id, session });
+        }
         return;
       }
 
       const previousCustomerId = invoice.customerId.toString();
+      const previousState = {
+        customerId: previousCustomerId,
+        invoiceDate: invoice.invoiceDate,
+        grandTotal: invoice.grandTotal,
+        totalTax: invoice.totalTax,
+      };
       const business = await Business.findById(req.tenant.businessId).session(session);
       const customer = await Customer.findOne({
         _id: req.body.customerId || invoice.customerId,
@@ -611,6 +632,7 @@ const updateInvoice = asyncHandler(async (req, res) => {
       invoice.gstSnapshot = gstSnapshot;
       invoice.gstBreakup = gstSnapshot ? { cgst: gstSnapshot.cgst, sgst: gstSnapshot.sgst, utgst: gstSnapshot.utgst, igst: gstSnapshot.igst, taxableValue: gstSnapshot.taxableValue, hsnSacSummary: gstSnapshot.hsnSacSummary } : undefined;
       invoice.notes = req.body.notes?.trim() || "";
+      if (req.body.centre !== undefined) invoice.centre = String(req.body.centre || "").trim().slice(0, 80);
       invoice.termsAndConditions = req.body.termsAndConditions?.trim() || "";
 
       await applyInvoiceStockDelta({
@@ -624,6 +646,45 @@ const updateInvoice = asyncHandler(async (req, res) => {
       });
 
       await invoice.save({ session });
+
+      // An edit of an issued invoice must move the books with it: the customer
+      // ledger and the journal follow the edited amount / customer / date, and
+      // the change is written to the audit log.
+      const editKey = new mongoose.Types.ObjectId().toString();
+      if (invoice.status === "issued") {
+        await rebookInvoiceReceivable({
+          businessId: req.tenant.businessId,
+          invoiceId: invoice._id,
+          targetCustomerId: customer._id,
+          targetAmount: invoice.grandTotal,
+          keyPrefix: `INVOICE:${invoice._id}:EDIT:${editKey}`,
+          createdBy: req.user._id,
+          notes: `Invoice ${invoice.invoiceNumber} edited`,
+          session,
+        });
+        await accountingService.repostEditedInvoiceJournalEntry({
+          invoice,
+          business,
+          previousInvoiceDate: previousState.invoiceDate,
+          editKey,
+          userId: req.user._id,
+          session,
+        });
+        await accountingService.resyncInvoiceCredits({ invoice, business, editKey, userId: req.user._id, session });
+      }
+      editAudit = {
+        businessId: req.tenant.businessId,
+        action: "INVOICE_EDITED",
+        entityType: "Invoice",
+        entityId: invoice._id,
+        req,
+        metadata: {
+          invoiceNumber: invoice.invoiceNumber,
+          before: previousState,
+          after: { customerId: customer._id.toString(), invoiceDate: invoice.invoiceDate, grandTotal: invoice.grandTotal, totalTax: invoice.totalTax },
+        },
+      };
+
       await syncCustomerInvoiceHistory({
         customer,
         businessId: req.tenant.businessId,
@@ -645,6 +706,8 @@ const updateInvoice = asyncHandler(async (req, res) => {
         }
       }
     });
+
+    if (editAudit) await writeAuditLog(editAudit);
 
     const invoice = await Invoice.findById(req.params.invoiceId)
       .populate("customerId", "name email phone")
@@ -731,7 +794,9 @@ const cancelInvoice = asyncHandler(async (req, res) => {
         if (invoice.crmSourceRef?.sourceId && Invoice.collection) {
           await Invoice.collection.updateOne({ _id: invoice._id }, { $rename: { crmSourceRef: "voidedCrmSourceRef" } }, { session });
         }
-        await createCustomerLedgerEntryOnce({ businessId: req.tenant.businessId, customerId: invoice.customerId, eventType: "REVERSAL", amount: invoice.grandTotal, direction: "CREDIT", invoiceId: invoice._id, sourceKey: `INVOICE:${invoice._id}:CANCEL`, createdBy: req.user._id, notes: "Invoice cancellation" }, { session });
+        // Credit back what the ledger holds for this invoice (after any edits),
+        // not just today's total.
+        await rebookInvoiceReceivable({ businessId: req.tenant.businessId, invoiceId: invoice._id, targetCustomerId: null, keyPrefix: `INVOICE:${invoice._id}:CANCEL`, singleCreditKey: `INVOICE:${invoice._id}:CANCEL`, createdBy: req.user._id, notes: "Invoice cancellation", session });
         await accountingService.postInvoiceCancellationJournalEntry({ invoice, userId: req.user._id, session });
 
       if (customer) {
@@ -839,8 +904,8 @@ const reissueInvoice = asyncHandler(async (req, res) => {
         lineItems: normalizedItems, shippingCharges: req.body.shippingCharges !== undefined ? req.body.shippingCharges : original.shippingCharges,
         roundOff: req.body.roundOff !== undefined ? req.body.roundOff : original.roundOff, amountPaid: 0,
       });
-      const sequence = business.invoiceNumbering?.nextSequence || 1;
       const invoiceDate = req.body.invoiceDate ? new Date(req.body.invoiceDate) : new Date();
+      const { sequence, sequenceFy } = invoiceSequenceFor(business.invoiceNumbering, invoiceDate);
       const invoiceNumber = buildInvoiceNumber({ prefix: business.invoiceNumbering?.prefix, format: business.invoiceNumbering?.format, sequence, date: invoiceDate });
       let crmSourceRef = null;
       if (original.crmSourceRef && original.crmSourceRef.sourceId) {
@@ -864,6 +929,7 @@ const reissueInvoice = asyncHandler(async (req, res) => {
           shippingCharges: totals.shippingCharges, roundOff: totals.roundOff, grandTotal: totals.grandTotal,
           amountPaid: 0, balanceDue: totals.grandTotal, paymentStatus: "unpaid",
           notes: req.body.notes?.trim() || ("Replaces cancelled invoice " + original.invoiceNumber + ". " + reason),
+          centre: req.body.centre !== undefined ? String(req.body.centre || "").trim().slice(0, 80) : original.centre || "",
           termsAndConditions: req.body.termsAndConditions?.trim() || original.termsAndConditions || "",
           gstSnapshot,
           gstBreakup: gstSnapshot ? { cgst: gstSnapshot.cgst, sgst: gstSnapshot.sgst, utgst: gstSnapshot.utgst, igst: gstSnapshot.igst, taxableValue: gstSnapshot.taxableValue, hsnSacSummary: gstSnapshot.hsnSacSummary } : undefined,
@@ -871,7 +937,7 @@ const reissueInvoice = asyncHandler(async (req, res) => {
         }
       ], { session });
       reissuedInvoice = created[0];
-      if (business.invoiceNumbering) { business.invoiceNumbering.nextSequence = sequence + 1; await business.save({ session }); }
+      if (business.invoiceNumbering) { business.invoiceNumbering.nextSequence = sequence + 1; business.invoiceNumbering.sequenceFy = sequenceFy; await business.save({ session }); }
       original.reissuedInvoiceId = reissuedInvoice._id; original.reissuedInvoiceNumber = reissuedInvoice.invoiceNumber; original.reissueReason = reason; await original.save({ session });
       await createCustomerLedgerEntryOnce({ businessId: req.tenant.businessId, customerId: customer._id, eventType: "INVOICE", amount: totals.grandTotal, direction: "DEBIT", invoiceId: reissuedInvoice._id, sourceKey: "INVOICE:" + reissuedInvoice._id + ":ISSUE", createdBy: req.user._id, notes: "Reissue replacing " + original.invoiceNumber }, { session });
       await accountingService.postInvoiceJournalEntry({ invoice: reissuedInvoice, business, userId: req.user._id, session });

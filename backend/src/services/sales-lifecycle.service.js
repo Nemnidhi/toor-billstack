@@ -1,6 +1,8 @@
 const mongoose = require("mongoose");
 
 const Invoice = require("../models/Invoice");
+const Business = require("../models/Business");
+const accountingService = require("./accounting.service");
 const CreditNote = require("../models/CreditNote");
 const SalesReturn = require("../models/SalesReturn");
 const Product = require("../models/Product");
@@ -106,6 +108,8 @@ const createCreditNote = async ({ businessId, userId, payload }) => {
       );
 
       await createCustomerLedgerEntryOnce({ businessId, customerId: inv.customerId, eventType: "CREDIT", amount: note.totalAmount, direction: "CREDIT", invoiceId: inv._id, sourceKey: `CREDIT_NOTE:${note._id}`, createdBy: userId, notes: "Credit note issued" }, { session });
+      const business = await Business.findById(businessId).session(session);
+      await accountingService.postCreditNoteJournalEntry({ note, invoice: inv, business, userId, session });
     });
     return note;
   } finally {
@@ -160,6 +164,8 @@ const createSalesReturn = async ({ businessId, userId, payload }) => {
         { session }
       );
       await createCustomerLedgerEntryOnce({ businessId, customerId: inv.customerId, eventType: "CREDIT", amount: ret.totalAmount, direction: "CREDIT", invoiceId: inv._id, sourceKey: `SALES_RETURN:${ret._id}`, createdBy: userId, notes: "Sales return adjustment" }, { session });
+      const business = await Business.findById(businessId).session(session);
+      await accountingService.postSalesReturnJournalEntry({ ret, invoice: inv, business, userId, session });
     });
     return ret;
   } finally {

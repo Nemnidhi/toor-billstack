@@ -13,6 +13,8 @@ const {
   issueRefreshToken,
   revokeRefreshToken,
   revokeRefreshTokenFamily,
+  revokeAllUserRefreshTokens,
+  findGraceReplacement,
   signAccessToken,
 } = require("../services/auth.service");
 const { sendEmail } = require("../services/email.service");
@@ -20,7 +22,7 @@ const { verifyGoogleIdentityToken } = require("../services/google-auth.service")
 const { writeAuditLog } = require("../services/audit.service");
 const { serializeBusinessWithPlan } = require("../utils/businessPlan");
 const { startTrialForNewBusiness } = require("../services/commercial-plan.service");
-const { getDeploymentMode } = require("../constants/modules");
+const { getDeploymentMode, isPublicSignupOpen } = require("../constants/modules");
 const { ensureSelfHostedBusinessProfile } = require("../services/self-hosted-profile.service");
 
 const refreshCookieName = process.env.REFRESH_COOKIE_NAME || "billstack_refresh_token";
@@ -74,7 +76,12 @@ const resolvePasswordLoginUser = async (normalizedEmail) => {
   return candidates[0];
 };
 
+const SIGNUP_CLOSED_MESSAGE = "New accounts cannot be created here. Ask your administrator to add you from Team.";
+
+const signupStatus = (_req, res) => res.status(200).json({ data: { signupOpen: isPublicSignupOpen() } });
+
 const register = asyncHandler(async (req, res) => {
+  if (!isPublicSignupOpen()) throw new AppError(SIGNUP_CLOSED_MESSAGE, 403);
   const { name, email, password, businessName } = req.body;
   const slug = await buildUniqueBusinessSlug(businessName);
 
@@ -181,6 +188,7 @@ const login = asyncHandler(async (req, res) => {
 });
 
 const googleAuth = asyncHandler(async (req, res) => {
+  if (req.body?.mode === "signup" && !isPublicSignupOpen()) throw new AppError(SIGNUP_CLOSED_MESSAGE, 403);
   const identity = await verifyGoogleIdentityToken(req.body.idToken, req.body.nonce || "");
   const mode = req.body.mode === "signup" ? "signup" : "login";
   const normalizedEmail = identity.email;
@@ -291,11 +299,13 @@ const resetPassword = asyncHandler(async (req, res) => {
   }
 
   user.password = await hashPassword(req.body.password);
+  user.passwordChangedAt = new Date();
   user.passwordResetToken = "";
   user.passwordResetExpiresAt = null;
   user.failedLoginAttempts = 0;
   user.lockedUntil = null;
   await user.save();
+  await revokeAllUserRefreshTokens(user._id);
 
   res.status(200).json({
     message: "Password reset successfully. Please sign in with your new password.",
@@ -315,19 +325,24 @@ const refresh = asyncHandler(async (req, res) => {
     throw new AppError("Refresh token is invalid or expired", 401);
   }
 
+  let graceRecord = null;
   if (tokenRecord.isRevoked) {
-    await revokeRefreshTokenFamily(tokenRecord.familyId);
-    res.clearCookie(refreshCookieName, refreshCookieOptions);
-    throw new AppError("Refresh token reuse detected. Please sign in again.", 401);
+    graceRecord = await findGraceReplacement(tokenRecord);
+    if (!graceRecord) {
+      await revokeRefreshTokenFamily(tokenRecord.familyId);
+      res.clearCookie(refreshCookieName, refreshCookieOptions);
+      throw new AppError("Refresh token reuse detected. Please sign in again.", 401);
+    }
   }
 
-  if (tokenRecord.expiresAt <= new Date()) {
+  if (!graceRecord && tokenRecord.expiresAt <= new Date()) {
     await revokeRefreshToken(refreshToken);
     res.clearCookie(refreshCookieName, refreshCookieOptions);
     throw new AppError("Refresh token is invalid or expired", 401);
   }
 
-  const validTokenRecord = await findValidRefreshToken(refreshToken);
+  const validTokenRecord = graceRecord || (await findValidRefreshToken(refreshToken));
+  if (!validTokenRecord) throw new AppError("Refresh token is invalid or expired", 401);
   const user = await User.findById(validTokenRecord.userId);
   let business = await Business.findById(tokenRecord.businessId);
 
@@ -344,15 +359,20 @@ const refresh = asyncHandler(async (req, res) => {
   const scopedBusiness = await Business.findById(scopedUser.businessId);
   if (!scopedBusiness || scopedBusiness.isDisabled) throw new AppError("Billing entity unavailable", 403);
 
-  const nextRefreshToken = await issueRefreshToken(user, {
-    familyId: tokenRecord.familyId,
-    ipAddress: req.ip,
-    userAgent: req.get("user-agent"),
-  });
+  // A concurrent refresh reuses the replacement the first request made, so both
+  // tabs end up on the same live token.
+  let nextRefreshToken = graceRecord?.token;
+  if (!nextRefreshToken) {
+    nextRefreshToken = await issueRefreshToken(user, {
+      familyId: tokenRecord.familyId,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent"),
+    });
 
-  await revokeRefreshToken(refreshToken, {
-    replacedByToken: nextRefreshToken,
-  });
+    await revokeRefreshToken(refreshToken, {
+      replacedByToken: nextRefreshToken,
+    });
+  }
 
   const nextAccessToken = signAccessToken(scopedUser);
 
@@ -405,4 +425,5 @@ module.exports = {
   refresh,
   register,
   resetPassword,
+  signupStatus,
 };

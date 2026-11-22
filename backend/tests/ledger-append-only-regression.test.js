@@ -122,7 +122,7 @@ test("financial callers no longer update append-only ledgers directly", () => {
 
 test("payment allocation ledger events do not reuse paymentId unique key", () => {
   const paymentService = src("services", "payment.service.js");
-  const allocationEntryPattern = /createCustomerLedgerEntryOnce\(\{ businessId, customerId: invoice\.customerId, eventType: "PAYMENT"[\s\S]*?sourceKey: `PAYMENT_ALLOCATION:\$\{allocation\._id\}`[\s\S]*?\}/;
+  const allocationEntryPattern = /createCustomerLedgerEntryOnce\(\s*\{ businessId, customerId: (?:updatedInvoice|invoice)\.customerId, eventType: "PAYMENT"[\s\S]*?sourceKey: `PAYMENT_ALLOCATION:\$\{allocation\._id\}`[\s\S]*?\}/;
   const allocationEntry = paymentService.match(allocationEntryPattern)?.[0] || "";
 
   assert.match(allocationEntry, /allocationId: allocation\._id/);

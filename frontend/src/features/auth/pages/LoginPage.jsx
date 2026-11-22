@@ -5,6 +5,7 @@ import FormField from "../../../components/ui/FormField";
 import LoadingIndicator from "../../../components/ui/LoadingIndicator";
 import GoogleAuthButton from "../components/GoogleAuthButton";
 import { useAuth } from "../useAuth";
+import { useSignupOpen } from "../useSignupOpen";
 
 const initialForm = {
   email: "",
@@ -19,6 +20,7 @@ const LoginPage = () => {
   const [retryAfter, setRetryAfter] = useState(0);
   const { googleAuth, login } = useAuth();
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
+  const signupOpen = useSignupOpen(false);
 
   useEffect(() => {
     if (!retryAfter) return undefined;
@@ -99,7 +101,9 @@ const LoginPage = () => {
           {isSubmitting ? <LoadingIndicator compact label="Signing in..." className="text-white [&>svg]:text-white" /> : retryAfter ? `Try again in ${Math.floor(retryAfter / 60)}:${String(retryAfter % 60).padStart(2, "0")}` : "Sign in"}
         </button>
       </form>
-      <p className="mt-5 text-center text-sm text-slate-500 dark:text-slate-400">New here? <Link to="/register" className="font-medium text-brand-700 dark:text-brand-300">Create account</Link></p>
+      {signupOpen ? (
+  <p className="mt-5 text-center text-sm text-slate-500 dark:text-slate-400">New here? <Link to="/register" className="font-medium text-brand-700 dark:text-brand-300">Create account</Link></p>
+      ) : null}
     </AuthCard>
   );
 };

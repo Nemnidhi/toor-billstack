@@ -94,6 +94,31 @@ const revokeRefreshTokenFamily = async (familyId) => {
   );
 };
 
+// After a password is reset or changed by an admin, every device signed in as
+// that person is signed out (their refresh tokens stop working).
+const revokeAllUserRefreshTokens = async (userId) => {
+  if (!userId) return;
+  await RefreshToken.updateMany({ userId, isRevoked: false }, { isRevoked: true, revokedAt: new Date() });
+};
+
+// Two tabs (or a tab and a retry) often refresh at the same moment with the same
+// cookie. The first one rotates it; the second must not be treated as a stolen
+// token. For a short window after a rotation, the old token leads to its
+// replacement instead of revoking the whole sign-in.
+const REFRESH_GRACE_MS = Number(process.env.REFRESH_TOKEN_GRACE_MS || 30000);
+const findGraceReplacement = async (record) => {
+  let current = record;
+  for (let hop = 0; hop < 3; hop += 1) {
+    if (!current?.isRevoked || !current.replacedByToken || !current.revokedAt) return null;
+    if (Date.now() - new Date(current.revokedAt).getTime() > REFRESH_GRACE_MS) return null;
+    const next = await findRefreshToken(current.replacedByToken);
+    if (!next || String(next.familyId) !== String(record.familyId)) return null;
+    if (!next.isRevoked && next.expiresAt > new Date()) return next;
+    current = next;
+  }
+  return null;
+};
+
 const buildAuthPayload = async ({ user, business, accessToken }) => {
   const subscription = await ensureBusinessSubscription({
     businessId: business._id,
@@ -121,6 +146,8 @@ const buildAuthPayload = async ({ user, business, accessToken }) => {
 };
 
 module.exports = {
+  revokeAllUserRefreshTokens,
+  findGraceReplacement,
   buildAuthPayload,
   comparePassword,
   findRefreshToken,

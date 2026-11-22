@@ -156,7 +156,6 @@ test("SELF_HOSTED still keeps tenant isolation, module activation and RBAC enfor
 test("frontend hides SaaS subscription purchase copy in SELF_HOSTED sidebar", () => {
   const sidebar = frontend("components", "layout", "Sidebar.jsx");
   assert.match(sidebar, /deploymentMode === "SELF_HOSTED"/);
-  assert.match(sidebar, /Licensed workspace/);
-  assert.match(sidebar, /Module access is managed by your license/);
+  assert.match(sidebar, /label: "Subscription"[^}]*saasOnly: true/);
   assert.match(sidebar, /saasOnly && isSelfHostedWorkspace/);
 });

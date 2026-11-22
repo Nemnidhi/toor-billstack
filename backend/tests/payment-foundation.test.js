@@ -112,9 +112,12 @@ test("allocation syncs invoice cached payment fields for dashboard aggregates wi
   const path = require("node:path");
   const source = fs.readFileSync(path.join(__dirname, "../src/services/payment.service.js"), "utf8");
 
-  assert.match(source, /invoice\.amountPaid = fromMinorUnits\(paidMinor\)/);
-  assert.match(source, /invoice\.balanceDue = fromMinorUnits\(balanceMinor\)/);
-  assert.match(source, /invoice\.paymentStatus = balanceMinor === 0 \? "paid" : paidMinor > 0 \? "partial" : "unpaid"/);
-  assert.match(source, /await invoice\.save\(\{ session \}\)/);
+  // The invoice's cached amountPaid / balanceDue / paymentStatus move in one
+  // atomic, conditional update, so two allocations at once cannot over-pay it.
+  assert.match(source, /balanceDue: \{ \$gte: amountDecimal \}/);
+  assert.match(source, /amountPaid: \{ \$add: \["\$amountPaid", amountDecimal\] \}/);
+  assert.match(source, /balanceDue: \{ \$subtract: \["\$balanceDue", amountDecimal\] \}/);
+  assert.match(source, /then: "paid"/);
+  assert.match(source, /then: "partial"/);
   assert.match(source, /createCustomerLedgerEntryOnce/);
 });

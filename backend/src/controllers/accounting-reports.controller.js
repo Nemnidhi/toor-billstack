@@ -22,6 +22,11 @@ const getProfitAndLoss = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data });
 });
 
+/** Centre names in use (for the centre pickers on invoices, expenses, purchases and reports). */
+const getCentres = asyncHandler(async (req, res) => {
+  res.status(200).json({ success: true, data: await reportsService.listCentres({ businessId: req.tenant.businessId }) });
+});
+
 /**
  * Controller: Balance Sheet
  */
@@ -190,6 +195,7 @@ const exportAccountantPack = asyncHandler(async (req, res) => {
 
 module.exports = {
   getProfitAndLoss,
+  getCentres,
   getBalanceSheet,
   getBankBook,
   getCashBook,

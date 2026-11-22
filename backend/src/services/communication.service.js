@@ -657,7 +657,7 @@ const processDueReminder = async ({ reminder, session }) => {
   reminder.sentAt = sent.sentAt;
   reminder.failureReason = sent.failureReason;
   reminder.retryCount += sent.status === "FAILED" ? 1 : 0;
-  reminder.nextRetryAt = sent.status === "FAILED" ? new Date(Date.now() + Math.min(60, reminder.retryCount + 1) * 60000) : null;
+  reminder.nextRetryAt = sent.status === "FAILED" ? nextRetryAfterFailure(reminder.retryCount) : null;
   reminder.lockedAt = null;
   reminder.lockedBy = "";
   await reminder.save({ session });
@@ -668,6 +668,13 @@ const processDueReminder = async ({ reminder, session }) => {
   }
   return reminder;
 };
+
+// A message that keeps failing (wrong number, provider not set up) is retried a
+// few times with a growing wait, then left as FAILED for a person to look at -
+// never retried for ever.
+const MAX_DELIVERY_ATTEMPTS = Math.max(Number(process.env.BILLSTACK_MAX_DELIVERY_ATTEMPTS || 6), 1);
+const nextRetryAfterFailure = (retryCount) =>
+  retryCount >= MAX_DELIVERY_ATTEMPTS ? null : new Date(Date.now() + Math.min(60, retryCount + 1) * 60000);
 
 const processDueReminders = async ({ businessId, limit = 25 }) => {
   const processed = [];
@@ -708,7 +715,7 @@ const processDueReminders = async ({ businessId, limit = 25 }) => {
           $set: {
             status: "FAILED",
             failureReason: error.message,
-            nextRetryAt: new Date(Date.now() + 60000),
+            nextRetryAt: nextRetryAfterFailure(Number(row.retryCount || 0) + 1),
             lockedAt: null,
             lockedBy: "",
           },
@@ -758,7 +765,7 @@ const processScheduledWorkflowDeliveries = async ({ businessId, limit = 25 }) =>
         sent.lockedBy = "";
         if (sent.status === "FAILED") {
           sent.retryCount += 1;
-          sent.nextRetryAt = new Date(Date.now() + Math.min(60, sent.retryCount + 1) * 60000);
+          sent.nextRetryAt = nextRetryAfterFailure(sent.retryCount);
         }
         await sent.save({ session });
         processed.push(sent);
@@ -766,7 +773,7 @@ const processScheduledWorkflowDeliveries = async ({ businessId, limit = 25 }) =>
     } catch (error) {
       await MessageDelivery.updateOne(
         { _id: row._id, businessId, lockedBy: REMINDER_WORKER_ID, status: "PROCESSING" },
-        { $set: { status: "FAILED", failureReason: error.message, nextRetryAt: new Date(Date.now() + 60000), lockedAt: null, lockedBy: "" }, $inc: { retryCount: 1 } }
+        { $set: { status: "FAILED", failureReason: error.message, nextRetryAt: nextRetryAfterFailure(Number(row.retryCount || 0) + 1), lockedAt: null, lockedBy: "" }, $inc: { retryCount: 1 } }
       );
       log("error", "Workflow delivery processing failed after claim", { deliveryId: row._id.toString(), error: error.message });
     } finally {

@@ -9,6 +9,7 @@ const {
   refresh,
   register,
   resetPassword,
+  signupStatus,
 } = require("../controllers/auth.controller");
 const authMiddleware = require("../middlewares/auth.middleware");
 const tenantMiddleware = require("../middlewares/tenant.middleware");
@@ -28,6 +29,7 @@ const {
 
 const router = express.Router();
 
+router.get("/signup-status", signupStatus);
 router.post("/register", registrationRateLimiter, validate(registerValidator), register);
 router.post("/login", authRateLimiter, validate(loginValidator), login);
 router.post("/google", authRateLimiter, googleAuth);

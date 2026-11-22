@@ -4,7 +4,39 @@ const JournalEntry = require("../models/JournalEntry");
 const Business = require("../models/Business");
 const AppError = require("../utils/appError");
 const { SYSTEM_ACCOUNTS } = require("../constants/accounting");
+const { expenseAccountCodeFor } = require("../constants/expenses");
 const { fromMinorUnits, toMinorUnits } = require("../utils/money");
+
+// Paise from a stored rupee amount. Unlike toMinorUnits this never throws on a
+// third decimal (old purchase lines can carry one); it rounds to the paisa.
+const paise = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100);
+const centreOf = (value) => String(value || "").trim();
+const postingLine = (account, debitMinor, creditMinor, description, centre = "") => ({
+  accountId: account._id,
+  accountCode: account.code,
+  accountName: account.name,
+  debitMinor,
+  creditMinor,
+  description,
+  centre: centreOf(centre),
+});
+// Goldhawk is kept out of GST while it has no GSTIN. Once it registers (GST on in its settings
+// with a GSTIN) its bills post GST like TOOR's.
+const gstRegistered = (b) => Boolean(b?.gstConfiguration?.enabled && (b.gstConfiguration.gstin || b.gstTaxId));
+const isGoldhawkBusiness = async ({ business, businessId, session }) => {
+  let b = business;
+  if (!b || b.gstConfiguration === undefined) {
+    const id = business?._id || businessId;
+    b = id ? await Business.findById(id).select("billingEntityCode gstConfiguration gstTaxId").session(session || null).lean() : business;
+  }
+  return b?.billingEntityCode === "GOLDHAWK" && !gstRegistered(b);
+};
+// For an invoice: Goldhawk without GST at the time it was issued (its seller snapshot), or now.
+const isNoGstGoldhawkInvoice = async ({ invoice, business, session }) => {
+  const snap = invoice?.sellerSnapshot;
+  if (snap?.billingEntityCode === "GOLDHAWK") return !(snap.gstConfiguration?.enabled && snap.gstTaxId);
+  return isGoldhawkBusiness({ business, businessId: invoice?.businessId, session });
+};
 
 /**
  * Ensure default Chart of Accounts exists for a billing entity / businessId.
@@ -49,6 +81,19 @@ const nextJournalEntryNumber = async ({ businessId, session }) => {
   const count = await JournalEntry.countDocuments({ businessId }).session(session);
   const year = new Date().getFullYear();
   return `JE-${year}-${String(count + 1).padStart(5, "0")}`;
+};
+
+// The Indian calendar day of a date, YYYY-MM-DD.
+const istDay = (value) => new Date(new Date(value).getTime() + 330 * 60 * 1000).toISOString().slice(0, 10);
+
+/** Refuse a posting dated in a closed period (Business.booksLock.lockedUpTo, inclusive). */
+const assertPeriodOpen = async ({ businessId, entryDate, session }) => {
+  const business = await Business.findById(businessId).select("booksLock").session(session || null).lean();
+  const lockedUpTo = business?.booksLock?.lockedUpTo || "";
+  if (lockedUpTo && istDay(entryDate || new Date()) <= lockedUpTo) {
+    const [y, m, d] = lockedUpTo.split("-");
+    throw new AppError(`The books are closed up to ${d}-${m}-${y}. This change would post on ${istDay(entryDate).split("-").reverse().join("-")}. Ask the owner to reopen the period first.`, 409);
+  }
 };
 
 /**
@@ -99,6 +144,7 @@ const postJournalEntry = async ({
       debitMinor,
       creditMinor,
       description: line.description || "",
+      centre: centreOf(line.centre),
     };
   });
 
@@ -119,6 +165,8 @@ const postJournalEntry = async ({
     const existing = await JournalEntry.findOne({ businessId, sourceKey }).session(session);
     if (existing) return existing;
   }
+
+  await assertPeriodOpen({ businessId, entryDate, session });
 
   const entryNumber = await nextJournalEntryNumber({ businessId, session });
 
@@ -158,15 +206,13 @@ const postJournalEntry = async ({
  * TOOR: Posts AR, Revenue, Output GST (CGST/SGST or IGST).
  * Goldhawk: Posts AR, Revenue. GST is strictly ZERO.
  */
-const postInvoiceJournalEntry = async ({ invoice, business, userId, session }) => {
+const buildInvoicePostingLines = async ({ invoice, business, session }) => {
   // Issuing a zero-value invoice does not create a debit, revenue or tax posting.
   // Do not relax postJournalEntry's non-zero and balanced-entry requirements.
-  if (invoice.grandTotal === 0 && (invoice.totalTax ?? 0) === 0) return null;
+  if (invoice.grandTotal === 0 && (invoice.totalTax ?? 0) === 0) return [];
   const accounts = await ensureDefaultAccounts({ businessId: invoice.businessId, session });
 
-  const isGoldhawk =
-    business?.billingEntityCode === "GOLDHAWK" ||
-    invoice?.sellerSnapshot?.billingEntityCode === "GOLDHAWK";
+  const isGoldhawk = await isNoGstGoldhawkInvoice({ invoice, business, session });
 
   const arAccount = accounts.get("1100"); // Accounts Receivable
 
@@ -260,15 +306,185 @@ const postInvoiceJournalEntry = async ({ invoice, business, userId, session }) =
     });
   }
 
+  const centre = centreOf(invoice.centre);
+  return lines.map((line) => ({ ...line, centre }));
+};
+
+const postInvoiceJournalEntry = async ({ invoice, business, userId, session, sourceKey, description }) => {
+  const lines = await buildInvoicePostingLines({ invoice, business, session });
+  if (!lines.length) return null;
   return postJournalEntry({
     businessId: invoice.businessId,
     userId,
     entryDate: invoice.invoiceDate || new Date(),
     sourceType: "INVOICE",
     sourceId: invoice._id,
-    sourceKey: `INVOICE:${invoice._id}:ISSUED`,
-    description: `Issue Invoice ${invoice.invoiceNumber}`,
+    sourceKey: sourceKey || `INVOICE:${invoice._id}:ISSUED`,
+    description: description || `Issue Invoice ${invoice.invoiceNumber}`,
     lines,
+    session,
+  });
+};
+
+// Record ids are 24-character hex ObjectIds; anything else is refused rather than
+// put into a pattern.
+const escapeKey = (value) => {
+  const text = String(value);
+  if (!/^[a-f0-9]{24}$/i.test(text)) throw new AppError("Invalid record id", 400);
+  return text;
+};
+
+const netLineKey = (line) => `${String(line.accountId)}|${centreOf(line.centre)}`;
+
+/**
+ * What the books currently hold for one source record: every journal entry whose
+ * key starts <TYPE>:<id>: (the first posting, any edits, a cancellation), netted
+ * per account and centre.
+ * Returns { lines: [{accountId, accountCode, accountName, centre, netMinor}], first, count }.
+ */
+const netPostingsFor = async ({ businessId, keyType, recordId, session }) => {
+  const entries = await JournalEntry.find({
+    businessId,
+    sourceKey: { $regex: `^${keyType}:${escapeKey(recordId)}:` },
+  })
+    .sort({ entryDate: 1, createdAt: 1 })
+    .session(session || null);
+  const byAccount = new Map();
+  for (const entry of entries) {
+    for (const line of entry.lines || []) {
+      const key = netLineKey(line);
+      const row = byAccount.get(key) || { accountId: line.accountId, accountCode: line.accountCode, accountName: line.accountName, centre: centreOf(line.centre), netMinor: 0 };
+      row.netMinor += Number(line.debitMinor || 0) - Number(line.creditMinor || 0);
+      byAccount.set(key, row);
+    }
+  }
+  return { lines: [...byAccount.values()].filter((row) => row.netMinor !== 0), first: entries[0] || null, count: entries.length };
+};
+
+const netInvoicePostings = ({ invoice, session }) =>
+  netPostingsFor({ businessId: invoice.businessId, keyType: "INVOICE", recordId: invoice._id, session });
+
+const reversalLinesFor = (netLines, label) =>
+  netLines.map((row) => ({
+    accountId: row.accountId,
+    accountCode: row.accountCode,
+    accountName: row.accountName,
+    debitMinor: row.netMinor < 0 ? -row.netMinor : 0,
+    creditMinor: row.netMinor > 0 ? row.netMinor : 0,
+    description: `${label}: ${row.accountName || row.accountCode || "account"}`,
+    centre: centreOf(row.centre),
+  }));
+
+const sameNetLines = (netLines, postingLines) => {
+  const want = new Map();
+  for (const line of postingLines) {
+    const key = netLineKey(line);
+    want.set(key, (want.get(key) || 0) + Number(line.debitMinor || 0) - Number(line.creditMinor || 0));
+  }
+  for (const [key, value] of [...want.entries()]) if (value === 0) want.delete(key);
+  if (want.size !== netLines.length) return false;
+  return netLines.every((row) => want.get(netLineKey(row)) === row.netMinor);
+};
+
+/**
+ * Bring the books for one record in line with what the record says now: reverse
+ * whatever is posted under <TYPE>:<id>: (dated on the old date) and post the new
+ * lines (dated on the new date). Posts under issueKey when nothing was posted yet.
+ * No-op when nothing changed.
+ */
+const resyncRecordPostings = async ({ businessId, keyType, recordId, newLines, previousDate, newDate, editKey, issueKey, sourceType, label, userId, session }) => {
+  const current = await netPostingsFor({ businessId, keyType, recordId, session });
+  if (!current.count) {
+    if (!newLines.length) return null;
+    return postJournalEntry({ businessId, userId, entryDate: newDate || new Date(), sourceType, sourceId: recordId, sourceKey: issueKey, description: label, lines: newLines, session });
+  }
+  const dateUnchanged = new Date(previousDate || 0).getTime() === new Date(newDate || 0).getTime();
+  if (dateUnchanged && sameNetLines(current.lines, newLines)) return null;
+  if (current.lines.length) {
+    await postJournalEntry({
+      businessId,
+      userId,
+      entryDate: previousDate || newDate || new Date(),
+      sourceType: "REVERSAL",
+      sourceId: recordId,
+      sourceKey: `${keyType}:${recordId}:EDIT:${editKey}:REVERSE`,
+      description: `${label}: reverse earlier posting`,
+      lines: reversalLinesFor(current.lines, "Edit reversal"),
+      reversalOfEntryId: current.first?._id || null,
+      session,
+    });
+  }
+  if (!newLines.length) return null;
+  return postJournalEntry({
+    businessId,
+    userId,
+    entryDate: newDate || new Date(),
+    sourceType,
+    sourceId: recordId,
+    sourceKey: `${keyType}:${recordId}:EDIT:${editKey}:POSTED`,
+    description: `${label}: posting as edited`,
+    lines: newLines,
+    session,
+  });
+};
+
+/** Reverse everything posted for one record (cancellation). */
+const reverseRecordPostings = async ({ businessId, keyType, recordId, cancelKey, label, userId, entryDate, session }) => {
+  const current = await netPostingsFor({ businessId, keyType, recordId, session });
+  if (!current.lines.length) return null;
+  return postJournalEntry({
+    businessId,
+    userId,
+    entryDate: entryDate || new Date(),
+    sourceType: "REVERSAL",
+    sourceId: recordId,
+    sourceKey: cancelKey,
+    description: `${label}${current.first?.entryNumber ? ` (reversal of ${current.first.entryNumber})` : ""}`,
+    lines: reversalLinesFor(current.lines, "Cancellation reversal"),
+    reversalOfEntryId: current.first?._id || null,
+    session,
+  });
+};
+
+/**
+ * An issued invoice with no payments was edited. Bring the books in line with the
+ * invoice as it is now: reverse whatever is posted for it (dated on its old invoice
+ * date) and post the edited invoice (dated on its new date). If nothing was ever
+ * posted, post it now under the normal issue key. No-op when nothing changed.
+ */
+const repostEditedInvoiceJournalEntry = async ({ invoice, business, previousInvoiceDate, editKey, userId, session }) => {
+  const current = await netInvoicePostings({ invoice, session });
+  const newLines = await buildInvoicePostingLines({ invoice, business, session });
+  if (!current.count) {
+    return newLines.length ? postInvoiceJournalEntry({ invoice, business, userId, session }) : null;
+  }
+  const dateUnchanged = new Date(previousInvoiceDate || 0).getTime() === new Date(invoice.invoiceDate || 0).getTime();
+  if (dateUnchanged && sameNetLines(current.lines, newLines)) return null;
+
+  if (current.lines.length) {
+    await postJournalEntry({
+      businessId: invoice.businessId,
+      userId,
+      entryDate: previousInvoiceDate || invoice.invoiceDate || new Date(),
+      sourceType: "REVERSAL",
+      sourceId: invoice._id,
+      sourceKey: `INVOICE:${invoice._id}:EDIT:${editKey}:REVERSE`,
+      description: `Edit Invoice ${invoice.invoiceNumber}: reverse earlier posting`,
+      lines: reversalLinesFor(current.lines, "Edit reversal"),
+      reversalOfEntryId: current.first?._id || null,
+      session,
+    });
+  }
+  if (!newLines.length) return null;
+  return postJournalEntry({
+    businessId: invoice.businessId,
+    userId,
+    entryDate: invoice.invoiceDate || new Date(),
+    sourceType: "INVOICE",
+    sourceId: invoice._id,
+    sourceKey: `INVOICE:${invoice._id}:EDIT:${editKey}:POSTED`,
+    description: `Edit Invoice ${invoice.invoiceNumber}: posting as edited`,
+    lines: newLines,
     session,
   });
 };
@@ -277,22 +493,10 @@ const postInvoiceJournalEntry = async ({ invoice, business, userId, session }) =
  * Automatically post reversing Journal Entry when an invoice is cancelled.
  */
 const postInvoiceCancellationJournalEntry = async ({ invoice, userId, session }) => {
-  const original = await JournalEntry.findOne({
-    businessId: invoice.businessId,
-    sourceKey: `INVOICE:${invoice._id}:ISSUED`,
-  }).session(session);
-
-  if (!original) return null;
-
-  // Reverse every line: debits become credits, credits become debits
-  const reversedLines = original.lines.map((l) => ({
-    accountId: l.accountId,
-    accountCode: l.accountCode,
-    accountName: l.accountName,
-    debitMinor: l.creditMinor,
-    creditMinor: l.debitMinor,
-    description: `Cancellation reversal: ${l.description}`,
-  }));
+  // Reverse the net of everything posted for this invoice (the issue plus any
+  // edits), so an edited invoice is cancelled at the amount the books hold.
+  const current = await netInvoicePostings({ invoice, session });
+  if (!current.lines.length) return null;
 
   return postJournalEntry({
     businessId: invoice.businessId,
@@ -301,9 +505,9 @@ const postInvoiceCancellationJournalEntry = async ({ invoice, userId, session })
     sourceType: "REVERSAL",
     sourceId: invoice._id,
     sourceKey: `INVOICE:${invoice._id}:CANCEL`,
-    description: `Cancel Invoice ${invoice.invoiceNumber} (reversal of ${original.entryNumber})`,
-    lines: reversedLines,
-    reversalOfEntryId: original._id,
+    description: `Cancel Invoice ${invoice.invoiceNumber}${current.first?.entryNumber ? ` (reversal of ${current.first.entryNumber})` : ""}`,
+    lines: reversalLinesFor(current.lines, "Cancellation reversal"),
+    reversalOfEntryId: current.first?._id || null,
     session,
   });
 };
@@ -323,6 +527,7 @@ const postPaymentReceivedJournalEntry = async ({ payment, userId, session }) => 
   const advAcc = accounts.get("2100"); // Customer Advances
 
   const amountMinor = toMinorUnits(payment.amount);
+  const tdsMinor = paise(payment.tdsAmount);
 
   const lines = [
     {
@@ -338,10 +543,12 @@ const postPaymentReceivedJournalEntry = async ({ payment, userId, session }) => 
       accountCode: advAcc.code,
       accountName: advAcc.name,
       debitMinor: 0,
-      creditMinor: amountMinor,
+      creditMinor: amountMinor + tdsMinor,
       description: `Customer advance ${payment.referenceNumber || payment._id}`,
     },
   ];
+  // TDS the customer deducted: we get it back from the tax department, not the customer.
+  if (tdsMinor > 0) lines.splice(1, 0, postingLine(accounts.get("1410"), tdsMinor, 0, `TDS deducted by customer ${payment.referenceNumber || payment._id}`));
 
   return postJournalEntry({
     businessId: payment.businessId,
@@ -392,7 +599,7 @@ const postPaymentAllocatedJournalEntry = async ({ allocation, payment, invoiceId
   return postJournalEntry({
     businessId: allocation.businessId,
     userId,
-    entryDate: new Date(),
+    entryDate: allocation.createdAt || new Date(),
     sourceType: "PAYMENT_ALLOCATION",
     sourceId: allocation._id,
     sourceKey: `ALLOCATION:${allocation._id}:POSTED`,
@@ -436,7 +643,7 @@ const postPaymentAllocationReversalJournalEntry = async ({ reversal, allocation,
   return postJournalEntry({
     businessId: reversal.businessId,
     userId,
-    entryDate: new Date(),
+    entryDate: reversal.createdAt || new Date(),
     sourceType: "REVERSAL",
     sourceId: reversal._id,
     sourceKey: `ALLOCATION_REVERSAL:${reversal._id}`,
@@ -459,12 +666,32 @@ const postPaymentReversalJournalEntry = async ({ reversalPayment, originalPaymen
 
   const amountMinor = toMinorUnits(reversalPayment.amount);
 
+  if (originalPayment?.direction === "PAID") {
+    // A supplier / landlord payment undone: the money comes back to the bank.
+    const supAdvAcc = accounts.get("1150");
+    return postJournalEntry({
+      businessId: reversalPayment.businessId,
+      userId,
+      entryDate: reversalPayment.paymentDate || new Date(),
+      sourceType: "REVERSAL",
+      sourceId: reversalPayment._id,
+      sourceKey: `PAYMENT_REVERSAL:${reversalPayment._id}`,
+      description: `Supplier payment reversed / refunded: ${originalPayment.referenceNumber || originalPayment._id}`,
+      lines: [
+        postingLine(bankAcc, amountMinor, 0, `Refund of supplier payment ${originalPayment._id}`),
+        postingLine(supAdvAcc, 0, amountMinor, `Reversal of supplier advance ${originalPayment._id}`),
+      ],
+      session,
+    });
+  }
+
+  const tdsMinor = paise(originalPayment?.tdsAmount);
   const lines = [
     {
       accountId: advAcc._id,
       accountCode: advAcc.code,
       accountName: advAcc.name,
-      debitMinor: amountMinor,
+      debitMinor: amountMinor + tdsMinor,
       creditMinor: 0,
       description: `Refund / reversal of payment ${originalPayment?._id}`,
     },
@@ -477,11 +704,12 @@ const postPaymentReversalJournalEntry = async ({ reversalPayment, originalPaymen
       description: `Disbursement for refund of payment ${originalPayment?._id}`,
     },
   ];
+  if (tdsMinor > 0) lines.push(postingLine(accounts.get("1410"), 0, tdsMinor, `TDS on reversed payment ${originalPayment?._id}`));
 
   return postJournalEntry({
     businessId: reversalPayment.businessId,
     userId,
-    entryDate: new Date(),
+    entryDate: reversalPayment.paymentDate || new Date(),
     sourceType: "REVERSAL",
     sourceId: reversalPayment._id,
     sourceKey: `PAYMENT_REVERSAL:${reversalPayment._id}`,
@@ -496,14 +724,13 @@ const postPaymentReversalJournalEntry = async ({ reversalPayment, originalPaymen
  * TOOR: Posts Expense, Input GST, Bank/AP.
  * Goldhawk: Posts Expense, Bank/AP (strictly ZERO GST).
  */
-const postExpenseJournalEntry = async ({ expense, business, userId, session }) => {
+const buildExpensePostingLines = async ({ expense, business, session }) => {
+  if (expense.status === "CANCELLED") return [];
   const accounts = await ensureDefaultAccounts({ businessId: expense.businessId, session });
 
-  const isGoldhawk =
-    business?.billingEntityCode === "GOLDHAWK" ||
-    (await Business.findById(expense.businessId).session(session))?.billingEntityCode === "GOLDHAWK";
+  const isGoldhawk = await isGoldhawkBusiness({ business, businessId: expense.businessId, session });
 
-  const expAcc = accounts.get("5010"); // General Expenses
+  const expAcc = accounts.get(expenseAccountCodeFor(expense.category)) || accounts.get("5010");
   const isCash = String(expense.paymentMethod || "").toUpperCase() === "CASH";
   const bankAcc = accounts.get(isCash ? "1010" : "1020");
   const apAcc = accounts.get("2010"); // Accounts Payable
@@ -527,16 +754,40 @@ const postExpenseJournalEntry = async ({ expense, business, userId, session }) =
     }
   }
 
+  // Reverse charge: no GST on the bill; we owe it (2240-2260) and take the same as input credit.
+  const rcm = { cgst: 0, sgst: 0, igst: 0 };
+  if (!isGoldhawk && expense.gstType === "REVERSE_CHARGE") {
+    const snap = expense.gstSnapshot || {};
+    rcm.cgst = paise(snap.cgst);
+    rcm.sgst = paise(snap.sgst) + paise(snap.utgst);
+    rcm.igst = paise(snap.igst);
+    cgstMinor += rcm.cgst;
+    sgstMinor += rcm.sgst;
+    igstMinor += rcm.igst;
+  }
+
+  // Blocked credit (s.17(5)): the GST is part of the cost, not an input credit.
+  let blockedMinor = 0;
+  if (expense.itcEligible === false) {
+    blockedMinor = cgstMinor + sgstMinor + igstMinor;
+    cgstMinor = 0;
+    sgstMinor = 0;
+    igstMinor = 0;
+  }
+
   const lines = [
     {
       accountId: expAcc._id,
       accountCode: expAcc.code,
       accountName: expAcc.name,
-      debitMinor: amountBeforeTaxMinor,
+      debitMinor: amountBeforeTaxMinor + blockedMinor,
       creditMinor: 0,
-      description: `Expense ${expense.expenseNumber}: ${expense.description || expense.category}`,
+      description: `Expense ${expense.expenseNumber}: ${expense.description || expense.category}${blockedMinor ? " (GST not claimable)" : ""}`,
     },
   ];
+  if (rcm.cgst) lines.push(postingLine(accounts.get("2240"), 0, rcm.cgst, `Expense ${expense.expenseNumber} CGST payable under reverse charge`));
+  if (rcm.sgst) lines.push(postingLine(accounts.get("2250"), 0, rcm.sgst, `Expense ${expense.expenseNumber} SGST payable under reverse charge`));
+  if (rcm.igst) lines.push(postingLine(accounts.get("2260"), 0, rcm.igst, `Expense ${expense.expenseNumber} IGST payable under reverse charge`));
 
   if (cgstMinor > 0) {
     const cgstAcc = accounts.get("1310");
@@ -574,9 +825,14 @@ const postExpenseJournalEntry = async ({ expense, business, userId, session }) =
     });
   }
 
-  // Credit side: Bank/Cash if PAID, AP if UNPAID, or split if PARTIAL
+  // TDS kept back from the supplier is owed to the government, not the supplier.
+  const tdsMinor = Math.min(paise(expense.tdsAmount), totalAmountMinor);
+  if (tdsMinor > 0) lines.push(postingLine(accounts.get("2310"), 0, tdsMinor, `TDS deducted on expense ${expense.expenseNumber}`));
+
+  // Credit side: Bank/Cash if PAID, AP if UNPAID, or split if PARTIAL (of the bill less TDS)
+  const payableMinor = totalAmountMinor - tdsMinor;
   const paidMinor = toMinorUnits(expense.paidAmount || 0, "Paid Amount", { allowZero: true });
-  const unpaidMinor = totalAmountMinor - paidMinor;
+  const unpaidMinor = payableMinor - paidMinor;
 
   if (expense.paymentStatus === "PAID" || (paidMinor > 0 && unpaidMinor === 0)) {
     lines.push({
@@ -584,7 +840,7 @@ const postExpenseJournalEntry = async ({ expense, business, userId, session }) =
       accountCode: bankAcc.code,
       accountName: bankAcc.name,
       debitMinor: 0,
-      creditMinor: totalAmountMinor,
+      creditMinor: payableMinor,
       description: `Disbursement for expense ${expense.expenseNumber}`,
     });
   } else if (expense.paymentStatus === "UNPAID" || paidMinor === 0) {
@@ -593,7 +849,7 @@ const postExpenseJournalEntry = async ({ expense, business, userId, session }) =
       accountCode: apAcc.code,
       accountName: apAcc.name,
       debitMinor: 0,
-      creditMinor: totalAmountMinor,
+      creditMinor: payableMinor,
       description: `Payable for expense ${expense.expenseNumber}`,
     });
   } else {
@@ -620,6 +876,14 @@ const postExpenseJournalEntry = async ({ expense, business, userId, session }) =
     }
   }
 
+  const centre = centreOf(expense.centre);
+  const kept = lines.filter((line) => line.debitMinor > 0 || line.creditMinor > 0).map((line) => ({ ...line, centre }));
+  return kept.length >= 2 ? kept : [];
+};
+
+const postExpenseJournalEntry = async ({ expense, business, userId, session }) => {
+  const lines = await buildExpensePostingLines({ expense, business, session });
+  if (!lines.length) return null;
   return postJournalEntry({
     businessId: expense.businessId,
     userId,
@@ -628,6 +892,260 @@ const postExpenseJournalEntry = async ({ expense, business, userId, session }) =
     sourceId: expense._id,
     sourceKey: `EXPENSE:${expense._id}:RECORDED`,
     description: `Expense ${expense.expenseNumber}: ${expense.description || expense.category}`,
+    lines,
+    session,
+  });
+};
+
+/** An expense was edited (amount, tax, category, centre, paid status or date): move the books with it. */
+const repostEditedExpenseJournalEntry = async ({ expense, business, previousExpenseDate, editKey, userId, session }) =>
+  resyncRecordPostings({
+    businessId: expense.businessId,
+    keyType: "EXPENSE",
+    recordId: expense._id,
+    newLines: await buildExpensePostingLines({ expense, business, session }),
+    previousDate: previousExpenseDate,
+    newDate: expense.expenseDate,
+    editKey,
+    issueKey: `EXPENSE:${expense._id}:RECORDED`,
+    sourceType: "EXPENSE",
+    label: `Edit Expense ${expense.expenseNumber}`,
+    userId,
+    session,
+  });
+
+const postExpenseCancellationJournalEntry = async ({ expense, userId, session }) =>
+  reverseRecordPostings({
+    businessId: expense.businessId,
+    keyType: "EXPENSE",
+    recordId: expense._id,
+    cancelKey: `EXPENSE:${expense._id}:CANCEL`,
+    label: `Cancel Expense ${expense.expenseNumber}`,
+    userId,
+    entryDate: expense.cancelledAt || new Date(),
+    session,
+  });
+
+/**
+ * Purchase bill from a supplier.
+ * Dr Purchases (cost) + Input GST (when the business is GST-registered), Cr Accounts Payable.
+ * Only the tax that is inside the bill total is taken as input credit.
+ */
+const buildPurchasePostingLines = async ({ purchase, business, session }) => {
+  const totalMinor = paise(purchase.totalAmount);
+  if (totalMinor <= 0) return [];
+  const accounts = await ensureDefaultAccounts({ businessId: purchase.businessId, session });
+  const isGoldhawk = await isGoldhawkBusiness({ business, businessId: purchase.businessId, session });
+  const centre = centreOf(purchase.centre);
+  const label = `Purchase ${purchase.purchaseNumber || purchase._id}`;
+
+  let cgstMinor = 0;
+  let sgstMinor = 0;
+  let igstMinor = 0;
+  const breakup = purchase.gstBreakup || {};
+  const registered = Boolean(purchase.gstSnapshot) && breakup.inputTaxCreditEligible !== false;
+  if (!isGoldhawk && registered) {
+    const billTaxMinor = (purchase.productsPurchased || []).reduce((sum, item) => sum + paise(item.tax), 0);
+    const snapIgst = paise(breakup.igst);
+    const snapLocal = paise(breakup.cgst) + paise(breakup.sgst) + paise(breakup.utgst);
+    const taxMinor = Math.min(Math.max(billTaxMinor, 0), totalMinor);
+    if (taxMinor > 0) {
+      if (snapIgst > 0 && snapLocal === 0) igstMinor = taxMinor;
+      else {
+        cgstMinor = Math.floor(taxMinor / 2);
+        sgstMinor = taxMinor - cgstMinor;
+      }
+    }
+  }
+  const costMinor = totalMinor - cgstMinor - sgstMinor - igstMinor;
+  const lines = [];
+  if (costMinor > 0) lines.push(postingLine(accounts.get("5100"), costMinor, 0, `${label} cost`, centre));
+  if (cgstMinor > 0) lines.push(postingLine(accounts.get("1310"), cgstMinor, 0, `${label} CGST input tax credit`, centre));
+  if (sgstMinor > 0) lines.push(postingLine(accounts.get("1320"), sgstMinor, 0, `${label} SGST input tax credit`, centre));
+  if (igstMinor > 0) lines.push(postingLine(accounts.get("1330"), igstMinor, 0, `${label} IGST input tax credit`, centre));
+  lines.push(postingLine(accounts.get("2010"), 0, totalMinor, `${label} payable`, centre));
+  return lines;
+};
+
+const postPurchaseJournalEntry = async ({ purchase, business, userId, session }) => {
+  const lines = await buildPurchasePostingLines({ purchase, business, session });
+  if (!lines.length) return null;
+  return postJournalEntry({
+    businessId: purchase.businessId,
+    userId,
+    entryDate: purchase.purchaseDate || new Date(),
+    sourceType: "PURCHASE",
+    sourceId: purchase._id,
+    sourceKey: `PURCHASE:${purchase._id}:RECORDED`,
+    description: `Purchase bill ${purchase.purchaseNumber || purchase._id}`,
+    lines,
+    session,
+  });
+};
+
+/**
+ * Money paid to a supplier / landlord. Until it is set against a bill it sits as an advance.
+ * Dr Advances to Suppliers, Cr Bank / Cash.
+ */
+const postPaymentPaidJournalEntry = async ({ payment, userId, session }) => {
+  if (payment.direction !== "PAID" || !payment.supplierId || payment.reversalOfPaymentId) return null;
+  const accounts = await ensureDefaultAccounts({ businessId: payment.businessId, session });
+  const isCash = String(payment.paymentMethod || "").toUpperCase() === "CASH";
+  const amountMinor = toMinorUnits(payment.amount);
+  const ref = payment.referenceNumber || payment._id;
+  return postJournalEntry({
+    businessId: payment.businessId,
+    userId,
+    entryDate: payment.paymentDate || new Date(),
+    sourceType: "PAYMENT",
+    sourceId: payment._id,
+    sourceKey: `PAYMENT:${payment._id}:PAID`,
+    description: `Payment made: ${ref}`,
+    lines: [
+      postingLine(accounts.get("1150"), amountMinor, 0, `Advance to supplier ${ref}`),
+      postingLine(accounts.get(isCash ? "1010" : "1020"), 0, amountMinor, `Payment made ${ref}`),
+    ],
+    session,
+  });
+};
+
+/** A supplier payment set against a purchase bill. Dr Accounts Payable, Cr Advances to Suppliers. */
+const postPurchaseAllocationJournalEntry = async ({ allocation, userId, session }) => {
+  if (!allocation.purchaseId) return null;
+  const accounts = await ensureDefaultAccounts({ businessId: allocation.businessId, session });
+  const amountMinor = toMinorUnits(allocation.allocatedAmount);
+  return postJournalEntry({
+    businessId: allocation.businessId,
+    userId,
+    entryDate: allocation.createdAt || new Date(),
+    sourceType: "PAYMENT_ALLOCATION",
+    sourceId: allocation._id,
+    sourceKey: `ALLOCATION:${allocation._id}:POSTED`,
+    description: `Payment ${allocation.paymentId} set against purchase ${allocation.purchaseId}`,
+    lines: [
+      postingLine(accounts.get("2010"), amountMinor, 0, `Settlement of purchase ${allocation.purchaseId}`),
+      postingLine(accounts.get("1150"), 0, amountMinor, `Supplier advance used for purchase ${allocation.purchaseId}`),
+    ],
+    session,
+  });
+};
+
+const postPurchaseAllocationReversalJournalEntry = async ({ reversal, allocation, userId, session }) => {
+  const accounts = await ensureDefaultAccounts({ businessId: reversal.businessId, session });
+  const amountMinor = toMinorUnits(reversal.amount);
+  return postJournalEntry({
+    businessId: reversal.businessId,
+    userId,
+    entryDate: reversal.createdAt || new Date(),
+    sourceType: "REVERSAL",
+    sourceId: reversal._id,
+    sourceKey: `ALLOCATION_REVERSAL:${reversal._id}`,
+    description: `Reversal of purchase payment allocation ${allocation._id}`,
+    lines: [
+      postingLine(accounts.get("1150"), amountMinor, 0, `Reversal of allocation ${allocation._id} - restore supplier advance`),
+      postingLine(accounts.get("2010"), 0, amountMinor, `Reversal of allocation ${allocation._id} - reinstate payable`),
+    ],
+    session,
+  });
+};
+
+/**
+ * Credit note or sales return against an invoice.
+ * Dr Sales Returns & Credit Notes (the part before tax) + Output GST (the tax inside it), Cr Accounts Receivable.
+ * creditLines: [{ invoiceLineIndex, amount }] with amounts that include tax, as stored on the note.
+ */
+const buildSalesCreditLines = async ({ invoice, business, creditLines, label, session }) => {
+  const accounts = await ensureDefaultAccounts({ businessId: invoice.businessId, session });
+  const isGoldhawk = await isNoGstGoldhawkInvoice({ invoice, business, session });
+  const centre = centreOf(invoice.centre);
+
+  let totalMinor = 0;
+  let taxMinor = 0;
+  for (const credit of creditLines) {
+    const amountMinor = paise(credit.amount);
+    totalMinor += amountMinor;
+    const sold = (invoice.lineItems || [])[Number(credit.invoiceLineIndex)];
+    if (!sold || isGoldhawk) continue;
+    const soldTotal = Number(sold.itemTotal || 0);
+    const soldTax = Number(sold.taxAmount ?? sold.tax ?? (soldTotal - Number(sold.taxableAmount || soldTotal)));
+    if (soldTotal > 0 && soldTax > 0) taxMinor += Math.round((amountMinor * soldTax) / soldTotal);
+  }
+  if (totalMinor <= 0) return [];
+  taxMinor = Math.min(taxMinor, totalMinor);
+
+  let cgstMinor = 0;
+  let sgstMinor = 0;
+  let igstMinor = 0;
+  if (taxMinor > 0) {
+    const breakup = invoice.gstBreakup || invoice.gstSnapshot || {};
+    const local = paise(breakup.cgst) + paise(breakup.sgst) + paise(breakup.utgst);
+    if (paise(breakup.igst) > 0 && local === 0) igstMinor = taxMinor;
+    else {
+      cgstMinor = Math.floor(taxMinor / 2);
+      sgstMinor = taxMinor - cgstMinor;
+    }
+  }
+  const netMinor = totalMinor - taxMinor;
+  const lines = [];
+  if (netMinor > 0) lines.push(postingLine(accounts.get("4090"), netMinor, 0, `${label} (before tax)`, centre));
+  if (cgstMinor > 0) lines.push(postingLine(accounts.get("2210"), cgstMinor, 0, `${label} CGST output reduced`, centre));
+  if (sgstMinor > 0) lines.push(postingLine(accounts.get("2220"), sgstMinor, 0, `${label} SGST output reduced`, centre));
+  if (igstMinor > 0) lines.push(postingLine(accounts.get("2230"), igstMinor, 0, `${label} IGST output reduced`, centre));
+  lines.push(postingLine(accounts.get("1100"), 0, totalMinor, `${label} credited to customer`, centre));
+  return lines;
+};
+
+const postCreditNoteJournalEntry = async ({ note, invoice, business, userId, session }) => {
+  if (note.status === "CANCELLED") return null;
+  const label = `Credit note ${note.creditNoteNumber} on invoice ${invoice.invoiceNumber}`;
+  const lines = await buildSalesCreditLines({ invoice, business, creditLines: note.lineItems || [], label, session });
+  if (!lines.length) return null;
+  return postJournalEntry({
+    businessId: note.businessId,
+    userId,
+    entryDate: note.createdAt || new Date(),
+    sourceType: "CREDIT_NOTE",
+    sourceId: note._id,
+    sourceKey: `CREDIT_NOTE:${note._id}:ISSUED`,
+    description: label,
+    lines,
+    session,
+  });
+};
+
+// Sales return lines carry quantities; their value is the invoice line value for that quantity
+// (the same figure the customer ledger was credited with).
+const salesReturnCreditLines = ({ ret, invoice }) =>
+  (ret.lineItems || []).map((line) => {
+    const sold = (invoice.lineItems || [])[Number(line.invoiceLineIndex)] || {};
+    const soldQty = Number(sold.quantity || 0);
+    const amount = soldQty > 0 ? Math.round((paise(sold.itemTotal) * Number(line.quantity || 0)) / soldQty) / 100 : 0;
+    return { invoiceLineIndex: line.invoiceLineIndex, amount };
+  });
+
+// Keep the journal equal to the customer ledger credit; put any rounding gap on the first line.
+const balancedReturnCreditLines = ({ ret, invoice }) => {
+  const creditLines = salesReturnCreditLines({ ret, invoice });
+  const sumMinor = creditLines.reduce((sum, line) => sum + paise(line.amount), 0);
+  const recordedMinor = paise(ret.totalAmount);
+  if (creditLines.length && sumMinor !== recordedMinor) creditLines[0].amount = (paise(creditLines[0].amount) + recordedMinor - sumMinor) / 100;
+  return creditLines;
+};
+
+const postSalesReturnJournalEntry = async ({ ret, invoice, business, userId, session }) => {
+  if (ret.status === "CANCELLED") return null;
+  const label = `Sales return ${ret.returnNumber} on invoice ${invoice.invoiceNumber}`;
+  const creditLines = balancedReturnCreditLines({ ret, invoice });
+  const lines = await buildSalesCreditLines({ invoice, business, creditLines, label, session });
+  if (!lines.length) return null;
+  return postJournalEntry({
+    businessId: ret.businessId,
+    userId,
+    entryDate: ret.createdAt || new Date(),
+    sourceType: "SALES_RETURN",
+    sourceId: ret._id,
+    sourceKey: `SALES_RETURN:${ret._id}:ISSUED`,
+    description: label,
     lines,
     session,
   });
@@ -853,7 +1371,78 @@ const getAccountLedger = async ({ businessId, accountId, from, to }) => {
   };
 };
 
+/**
+ * An invoice was edited or moved to another centre: its credit notes and sales
+ * returns follow it (centre, and the tax share if the lines changed).
+ */
+const resyncInvoiceCredits = async ({ invoice, business, editKey, userId, session }) => {
+  const CreditNote = require("../models/CreditNote");
+  const SalesReturn = require("../models/SalesReturn");
+  const [notes, returns] = await Promise.all([
+    CreditNote.find({ businessId: invoice.businessId, invoiceId: invoice._id, status: "ISSUED" }).session(session || null),
+    SalesReturn.find({ businessId: invoice.businessId, invoiceId: invoice._id, status: "ISSUED" }).session(session || null),
+  ]);
+  for (const note of notes) {
+    const label = `Credit note ${note.creditNoteNumber} on invoice ${invoice.invoiceNumber}`;
+    await resyncRecordPostings({
+      businessId: invoice.businessId,
+      keyType: "CREDIT_NOTE",
+      recordId: note._id,
+      newLines: await buildSalesCreditLines({ invoice, business, creditLines: note.lineItems || [], label, session }),
+      previousDate: note.createdAt,
+      newDate: note.createdAt,
+      editKey,
+      issueKey: `CREDIT_NOTE:${note._id}:ISSUED`,
+      sourceType: "CREDIT_NOTE",
+      label,
+      userId,
+      session,
+    });
+  }
+  for (const ret of returns) {
+    const label = `Sales return ${ret.returnNumber} on invoice ${invoice.invoiceNumber}`;
+    await resyncRecordPostings({
+      businessId: invoice.businessId,
+      keyType: "SALES_RETURN",
+      recordId: ret._id,
+      newLines: await buildSalesCreditLines({ invoice, business, creditLines: balancedReturnCreditLines({ ret, invoice }), label, session }),
+      previousDate: ret.createdAt,
+      newDate: ret.createdAt,
+      editKey,
+      issueKey: `SALES_RETURN:${ret._id}:ISSUED`,
+      sourceType: "SALES_RETURN",
+      label,
+      userId,
+      session,
+    });
+  }
+};
+
 module.exports = {
+  paise,
+  postingLine,
+  assertPeriodOpen,
+  isGoldhawkBusiness,
+  isNoGstGoldhawkInvoice,
+  istDay,
+  resyncInvoiceCredits,
+  buildExpensePostingLines,
+  buildInvoicePostingLines,
+  buildPurchasePostingLines,
+  buildSalesCreditLines,
+  netInvoicePostings,
+  netPostingsFor,
+  postCreditNoteJournalEntry,
+  postExpenseCancellationJournalEntry,
+  postPaymentPaidJournalEntry,
+  postPurchaseAllocationJournalEntry,
+  postPurchaseAllocationReversalJournalEntry,
+  postPurchaseJournalEntry,
+  postSalesReturnJournalEntry,
+  repostEditedExpenseJournalEntry,
+  resyncRecordPostings,
+  reverseRecordPostings,
+  repostEditedInvoiceJournalEntry,
   ensureDefaultAccounts,
   getAccountLedger,
   getTrialBalance,

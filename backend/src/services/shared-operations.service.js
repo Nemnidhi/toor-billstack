@@ -74,7 +74,8 @@ const assertTransition = (map, current, next, label) => {
 
 const nextNumber = ({ business, field, prefix, format, date = new Date() }) => {
   const numbering = business[field] || {};
-  const sequence = numbering.nextSequence || 1;
+  // a format with {FY} restarts at 1 each financial year
+  const { sequence, sequenceFy } = require("../utils/invoice").invoiceSequenceFor({ format: numbering.format || format, nextSequence: numbering.nextSequence, sequenceFy: numbering.sequenceFy }, date);
   const value = buildInvoiceNumber({
     prefix: numbering.prefix || prefix,
     format: numbering.format || format,
@@ -85,6 +86,7 @@ const nextNumber = ({ business, field, prefix, format, date = new Date() }) => {
     prefix: numbering.prefix || prefix,
     format: numbering.format || format,
     nextSequence: sequence + 1,
+    sequenceFy,
   };
   return value;
 };
