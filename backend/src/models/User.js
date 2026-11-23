@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-const roles = ["owner", "admin", "staff", "accountant"];
+const roles = ["owner", "admin", "staff", "accountant", "auditor"];
 
 const userSchema = new mongoose.Schema(
   {
@@ -57,6 +57,11 @@ const userSchema = new mongoose.Schema(
       canViewHR: {
         type: Boolean,
         default: false,
+      },
+      // For the auditor role: areas this person may also change (constants/auditor-grants.js).
+      grants: {
+        type: [String],
+        default: [],
       },
     },
     isActive: {

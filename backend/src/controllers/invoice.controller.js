@@ -21,6 +21,7 @@ const { writeAuditLog } = require("../services/audit.service");
 const accountingService = require("../services/accounting.service");
 const { log } = require("../utils/logger");
 const paymentService = require("../services/payment.service");
+const { cleanTags } = require("../services/reporting-tags.service");
   const { applyFinancialRead, applyFinancialReads, hasDocumentAllocations, hasMigratedFinancialState, documentUpdateDecision, legacyPaymentWriteDecision } = require("../services/financial-read.service");
 const {
   buildPaginatedResponse,
@@ -452,6 +453,7 @@ const createInvoice = asyncHandler(async (req, res) => {
             paymentStatus: totals.paymentStatus,
             notes: req.body.notes?.trim() || "",
             centre: String(req.body.centre || "").trim().slice(0, 80),
+            ...(await cleanTags(req.tenant.businessId, req.body)),
             termsAndConditions: req.body.termsAndConditions?.trim() || "",
             gstSnapshot,
             gstBreakup: gstSnapshot ? { cgst: gstSnapshot.cgst, sgst: gstSnapshot.sgst, utgst: gstSnapshot.utgst, igst: gstSnapshot.igst, taxableValue: gstSnapshot.taxableValue, hsnSacSummary: gstSnapshot.hsnSacSummary } : undefined,
@@ -544,15 +546,17 @@ const updateInvoice = asyncHandler(async (req, res) => {
       if (!updateDecision.allowed) {
         throw new AppError("Invoices with payment allocations cannot have financial values changed.", 400);
       }
-      const textOnly = Object.keys(req.body || {}).every((key) => ["notes", "termsAndConditions", "centre"].includes(key));
+      const textOnly = Object.keys(req.body || {}).every((key) => ["notes", "termsAndConditions", "centre", "businessLine", "reportCategory"].includes(key));
       if (allocationsExist || textOnly) {
         if (req.body.notes !== undefined) invoice.notes = req.body.notes?.trim() || "";
         if (req.body.termsAndConditions !== undefined) invoice.termsAndConditions = req.body.termsAndConditions?.trim() || "";
-        const previousCentre = invoice.centre || "";
+        const tagKey = (doc) => [doc.centre || "", doc.businessLine || "", doc.reportCategory || ""].join("|");
+        const previousTags = tagKey(invoice);
         if (req.body.centre !== undefined) invoice.centre = String(req.body.centre || "").trim().slice(0, 80);
+        Object.assign(invoice, await cleanTags(req.tenant.businessId, req.body, invoice));
         await invoice.save({ session });
-        if (invoice.status === "issued" && (invoice.centre || "") !== previousCentre) {
-          // Moving the invoice to another centre moves its income there too.
+        if (invoice.status === "issued" && tagKey(invoice) !== previousTags) {
+          // Moving the invoice to another centre, business line or category moves its income there too.
           const centreBusiness = await Business.findById(req.tenant.businessId).session(session);
           const centreEditKey = new mongoose.Types.ObjectId().toString();
           await accountingService.repostEditedInvoiceJournalEntry({ invoice, business: centreBusiness, previousInvoiceDate: invoice.invoiceDate, editKey: centreEditKey, userId: req.user._id, session });
@@ -633,6 +637,7 @@ const updateInvoice = asyncHandler(async (req, res) => {
       invoice.gstBreakup = gstSnapshot ? { cgst: gstSnapshot.cgst, sgst: gstSnapshot.sgst, utgst: gstSnapshot.utgst, igst: gstSnapshot.igst, taxableValue: gstSnapshot.taxableValue, hsnSacSummary: gstSnapshot.hsnSacSummary } : undefined;
       invoice.notes = req.body.notes?.trim() || "";
       if (req.body.centre !== undefined) invoice.centre = String(req.body.centre || "").trim().slice(0, 80);
+      Object.assign(invoice, await cleanTags(req.tenant.businessId, req.body, invoice));
       invoice.termsAndConditions = req.body.termsAndConditions?.trim() || "";
 
       await applyInvoiceStockDelta({
@@ -930,6 +935,7 @@ const reissueInvoice = asyncHandler(async (req, res) => {
           amountPaid: 0, balanceDue: totals.grandTotal, paymentStatus: "unpaid",
           notes: req.body.notes?.trim() || ("Replaces cancelled invoice " + original.invoiceNumber + ". " + reason),
           centre: req.body.centre !== undefined ? String(req.body.centre || "").trim().slice(0, 80) : original.centre || "",
+          ...(await cleanTags(req.tenant.businessId, { businessLine: req.body.businessLine ?? original.businessLine ?? "", reportCategory: req.body.reportCategory ?? original.reportCategory ?? "" }, original)),
           termsAndConditions: req.body.termsAndConditions?.trim() || original.termsAndConditions || "",
           gstSnapshot,
           gstBreakup: gstSnapshot ? { cgst: gstSnapshot.cgst, sgst: gstSnapshot.sgst, utgst: gstSnapshot.utgst, igst: gstSnapshot.igst, taxableValue: gstSnapshot.taxableValue, hsnSacSummary: gstSnapshot.hsnSacSummary } : undefined,

@@ -188,7 +188,35 @@ const reversePosting = async ({ run, userId, session, label }) => {
   });
 };
 
+// A corrected sheet for the month with nobody left for this company (client answers D25:
+// the CRM sends TOOR's and Goldhawk's people to their own books, each with its own key).
+// The month's run here is taken back: reversed if posted, refused once anything is paid.
+const withdrawRun = async ({ credential, payload }) => {
+  const externalRunId = text(payload.runId, 80);
+  const month = text(payload.month, 7);
+  const version = Number(payload.version);
+  if (!externalRunId) throw new AppError("The withdrawal has no run id", 422);
+  if (!MONTH.test(month)) throw new AppError("The withdrawal's month must be YYYY-MM", 422);
+  if (!Number.isInteger(version) || version < 1 || version > 1000) throw new AppError("The withdrawal's version must be a whole number", 422);
+  const businessId = credential.businessId;
+  return withTransaction(async (session) => {
+    const active = await PayrollRun.findOne({ businessId, month, status: { $ne: "SUPERSEDED" } }).session(session);
+    if (!active) return { outcome: "nothing_to_withdraw", run: { _id: null, month, version, status: "NONE" } };
+    if (active.version >= version) throw new AppError(`${monthLabel(month)} v${active.version} is already here; this is v${version}`, 409);
+    if (active.payments.length || active.dues.length) {
+      throw new AppError(`Salaries for ${monthLabel(month)} (v${active.version}) are already paid in BillStack. Put the correction in next month's sheet.`, 409);
+    }
+    if (active.status === "POSTED") await reversePosting({ run: active, userId: credential.createdBy, session, label: `Salaries ${monthLabel(month)} v${active.version} withdrawn: nobody on v${version} is paid by this company` });
+    active.status = "SUPERSEDED";
+    active.withdrawnAt = new Date();
+    active.withdrawnByExternalRunId = externalRunId;
+    await active.save({ session });
+    return { outcome: "withdrawn", run: active.toObject() };
+  });
+};
+
 const receiveRun = async ({ credential, payload }) => {
+  if (payload?.withdraw === true) return withdrawRun({ credential, payload });
   const sheet = normaliseSheet(payload);
   const businessId = credential.businessId;
   return withTransaction(async (session) => {

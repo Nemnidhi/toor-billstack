@@ -23,6 +23,9 @@ module.exports = {
   createDeposit: asyncHandler(async (req, res) => ok(res, await deposits.createDeposit({ businessId: companyOf(req), userId: req.user._id, payload: req.body }), 201)),
   moveDeposit: asyncHandler(async (req, res) => ok(res, await deposits.addMovement({ businessId: companyOf(req), userId: req.user._id, depositId: req.params.id, payload: req.body }))),
   cancelDeposit: asyncHandler(async (req, res) => ok(res, await deposits.cancelDeposit({ businessId: companyOf(req), userId: req.user._id, depositId: req.params.id }))),
+  setOffCandidates: asyncHandler(async (req, res) => ok(res, await deposits.setOffCandidates({ businessId: companyOf(req), depositId: req.params.id, customerId: req.query.customerId }))),
+  setOffDeposit: asyncHandler(async (req, res) => ok(res, await deposits.setOffAgainstInvoices({ businessId: companyOf(req), userId: req.user._id, depositId: req.params.id, payload: req.body }))),
+  undoSetOff: asyncHandler(async (req, res) => ok(res, await deposits.undoSetOff({ businessId: companyOf(req), userId: req.user._id, depositId: req.params.id, movementId: req.params.movementId, reason: req.body?.reason }))),
 
   assetClasses: asyncHandler(async (req, res) => ok(res, { classes: assets.ASSET_CLASSES, blocks: assets.IT_BLOCK_NAMES, lastFy: lastFy() })),
   listAssets: asyncHandler(async (req, res) => ok(res, await assets.listAssets({ businessId: companyOf(req), status: req.query.status }))),

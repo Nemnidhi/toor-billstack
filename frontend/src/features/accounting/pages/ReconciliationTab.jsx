@@ -21,6 +21,10 @@ const ReconciliationTab = ({ selectedEntity }) => {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
   const [error, setError] = useState("");
+  // A statement PDF's password: sent with the import to open the file, never kept.
+  const [pdfPassword, setPdfPassword] = useState("");
+  const [needsPassword, setNeedsPassword] = useState(false);
+  const isPdf = /\.pdf$/i.test(uploadFile?.name || "");
 
   const loadBankAccounts = async () => {
     try {
@@ -61,8 +65,8 @@ const ReconciliationTab = ({ selectedEntity }) => {
     }
   }, [selectedBankAccountId, selectedEntity]);
 
-  // The chosen statement file is sent as base64 (the server reads CSV, XLSX and
-  // XLS). Files over 5 MB are refused here with a clear message instead of
+  // The chosen statement file is sent as base64 (the server reads CSV, XLSX, XLS
+  // and PDF). Files over 5 MB are refused here with a clear message instead of
   // failing on the server.
   const MAX_STATEMENT_BYTES = 5 * 1024 * 1024;
   const handleFileUpload = (e) => {
@@ -70,6 +74,8 @@ const ReconciliationTab = ({ selectedEntity }) => {
     setError("");
     setUploadFile(null);
     setFileBase64("");
+    setPdfPassword("");
+    setNeedsPassword(false);
     if (!file) return;
     if (file.size > MAX_STATEMENT_BYTES) {
       setError("This file is larger than 5 MB. Export a shorter date range from the bank and import it in parts.");
@@ -95,15 +101,19 @@ const ReconciliationTab = ({ selectedEntity }) => {
       const res = await importBankStatementRequest({
         entity: selectedEntity,
         bankAccountId: selectedBankAccountId,
-        ...(fileBase64 ? { fileBase64, fileName: uploadFile?.name || "" } : { csvText }),
+        ...(fileBase64 ? { fileBase64, fileName: uploadFile?.name || "", ...(isPdf && pdfPassword ? { password: pdfPassword } : {}) } : { csvText }),
       });
       setImportResult(res);
       setCsvText("");
       setUploadFile(null);
       setFileBase64("");
+      setPdfPassword("");
+      setNeedsPassword(false);
       loadReconciliation();
     } catch (err) {
-      setError(err.response?.data?.message || err.message || "Statement import failed");
+      const message = err.response?.data?.message || err.message || "Statement import failed";
+      if (/password/i.test(message) && isPdf) setNeedsPassword(true);
+      setError(message);
     } finally {
       setImporting(false);
     }
@@ -159,7 +169,7 @@ const ReconciliationTab = ({ selectedEntity }) => {
             disabled={!selectedBankAccountId}
             className="flex items-center gap-1.5 rounded-xl bg-brand-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-brand-700 disabled:opacity-50"
           >
-            <UploadCloud className="h-4 w-4" /> Import Statement CSV
+            <UploadCloud className="h-4 w-4" /> Import statement
           </button>
           <button
             onClick={loadReconciliation}
@@ -246,8 +256,8 @@ const ReconciliationTab = ({ selectedEntity }) => {
                     <td className="px-4 py-3">
                       {tx.status === "MATCHED" ? (
                         <div className="flex items-center gap-2">
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                            <CheckCircle2 className="h-3 w-3" /> Matched
+                          <span title={tx.notes || ""} className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                            <CheckCircle2 className="h-3 w-3" /> {tx.matchedAutomatically ? "Matched (auto)" : "Matched"}
                           </span>
                           <button
                             onClick={() => handleUnmatch(tx._id)}
@@ -292,7 +302,7 @@ const ReconciliationTab = ({ selectedEntity }) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900 space-y-4">
             <div className="flex items-center justify-between border-b pb-3 dark:border-slate-800">
-              <h3 className="font-bold text-base text-slate-900 dark:text-white">Import Bank Statement (CSV / XLSX)</h3>
+              <h3 className="font-bold text-base text-slate-900 dark:text-white">Import bank statement (Excel / CSV / PDF)</h3>
               <button onClick={() => setShowImportModal(false)} className="text-slate-400 hover:text-slate-600">
                 <X className="h-5 w-5" />
               </button>
@@ -300,22 +310,38 @@ const ReconciliationTab = ({ selectedEntity }) => {
 
             <div className="space-y-3">
               <p className="text-xs text-slate-500">
-                Upload or paste bank statement (CSV or XLSX/Excel format). Recognized columns: Date, Narration/Description, Ref/UTR, Withdrawal/Debit, Deposit/Credit, Balance.
-                Duplicate rows are safely skipped via deterministic fingerprinting.
+                Upload the statement downloaded from net banking: Excel, CSV or PDF. Columns read: Date, Narration / Particulars, Ref / UTR, Withdrawal / Debit, Deposit / Credit (or Amount with Dr / Cr), Balance.
+                Rows already imported are skipped. Every row is checked against the balance printed beside it, and a row that can only be one entry in the books
+                (same amount, its reference, or within 3 days) is matched on its own; you can undo any match.
               </p>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Upload Statement File (.csv, .xlsx, .xls)
+                  Statement file (.xlsx, .xls, .csv, .pdf)
                 </label>
                 <input
                   type="file"
-                  accept=".csv, .xlsx, .xls"
+                  accept=".csv, .xlsx, .xls, .pdf"
                   onChange={handleFileUpload}
                   className="block w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-brand-50 file:text-brand-700 hover:file:bg-brand-100 dark:file:bg-slate-800 dark:file:text-slate-200"
                 />
                 {uploadFile && (
                   <p className="mt-1 text-xs text-emerald-600 font-medium">Selected file: {uploadFile.name}</p>
+                )}
+                {isPdf && (
+                  <div className="mt-3">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      PDF password {needsPassword ? "(needed)" : "(only if the PDF is locked)"}
+                    </label>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      value={pdfPassword}
+                      onChange={(e) => setPdfPassword(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-1.5 text-xs dark:border-slate-800 dark:bg-slate-800"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-400">Used only to open the file; it is not saved. A scanned PDF is read by the document reader when the owner has switched it on.</p>
+                  </div>
                 )}
               </div>
 
@@ -326,11 +352,7 @@ const ReconciliationTab = ({ selectedEntity }) => {
               </div>
             </div>
 
-            {importResult && (
-              <div className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                Imported: {importResult.importedCount} rows | Skipped Duplicates: {importResult.duplicateCount}
-              </div>
-            )}
+            {importResult && <ImportResult result={importResult} />}
 
             <form onSubmit={handleImportSubmit} className="space-y-4">
               <textarea
@@ -363,6 +385,37 @@ const ReconciliationTab = ({ selectedEntity }) => {
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+const SOURCES = { PDF_TEXT: "read from the PDF", PDF_READ_BY_AI: "scanned PDF, read by the document reader: check the rows", EXCEL_CSV: "" };
+
+const ImportResult = ({ result }) => {
+  const check = result.balanceCheck || {};
+  return (
+    <div className="space-y-2 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+      <p>
+        Imported {result.importedCount} rows{result.duplicateCount ? `, ${result.duplicateCount} already in` : ""}
+        {result.autoMatched ? `, ${result.autoMatched} matched automatically` : ""}
+        {SOURCES[result.source] ? ` (${SOURCES[result.source]})` : ""}.
+      </p>
+      {check.checked ? (
+        check.breakCount ? (
+          <div className="rounded-lg bg-amber-50 p-2 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+            <p className="font-semibold">The running balance does not follow at {check.breakCount} row{check.breakCount > 1 ? "s" : ""}: a row may be missing or misread.</p>
+            <ul className="mt-1 list-disc pl-4">
+              {check.breaks.map((b, i) => (
+                <li key={i}>{b.date} {b.description}: balance should be {money(b.expected)}, statement shows {money(b.printed)}</li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <p>Balance check: all {check.checked} rows agree with the statement's running balance.</p>
+        )
+      ) : null}
+      {result.unresolvedCount ? <p className="text-amber-700 dark:text-amber-300">{result.unresolvedCount} rows had no Dr / Cr and no balance to tell the direction; they were left out.</p> : null}
+      {result.unclear ? <p className="text-amber-700 dark:text-amber-300">Not clear on the scan: {result.unclear}</p> : null}
     </div>
   );
 };

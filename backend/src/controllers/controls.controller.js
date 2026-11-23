@@ -8,8 +8,11 @@ const companyOf = (req) => {
   if (scope.isConsolidated) throw new AppError("Pick TOOR or Goldhawk: the books are closed and audited per company.", 400);
   return scope.businessId;
 };
+// Client D14 (23 Nov 2026): the accountant closes and reopens the books as well as the owner / admin
+// (and an auditor given "Close / reopen the books").
 const ownerOrAdmin = (req) => {
-  if (!["owner", "admin"].includes(req.accountingScope?.role || req.user?.role)) throw new AppError("Only the owner or an admin can close or reopen the books", 403);
+  const role = require("../middlewares/auditor").effectiveRole(req, req.accountingScope?.role || req.user?.role);
+  if (!["owner", "admin", "accountant"].includes(role)) throw new AppError("Only the owner, an admin or an accountant can close or reopen the books", 403);
 };
 
 const getPeriodLock = asyncHandler(async (req, res) => {

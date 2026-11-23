@@ -4,12 +4,18 @@ const mongoose = require("mongoose");
 
 const movementSchema = new mongoose.Schema(
   {
-    kind: { type: String, enum: ["REFUND", "FORFEIT", "ADJUST_RENT", "WRITE_OFF"], required: true },
+    kind: { type: String, enum: ["REFUND", "FORFEIT", "ADJUST_RENT", "WRITE_OFF", "SET_OFF"], required: true },
     amount: { type: Number, required: true, min: 0.01 },
     date: { type: Date, required: true },
     mode: { type: String, enum: ["BANK", "CASH", ""], default: "" },
     note: { type: String, trim: true, default: "" },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    // SET_OFF: the deposit paid the customer's invoices (a receipt with method DEPOSIT_SET_OFF).
+    paymentId: { type: mongoose.Schema.Types.ObjectId, ref: "Payment", default: null },
+    invoices: { type: [{ _id: false, invoiceId: mongoose.Schema.Types.ObjectId, invoiceNumber: String, amount: Number }], default: undefined },
+    // An undone set-off stays on record but no longer counts against the deposit.
+    undoneAt: { type: Date, default: null },
+    undoneBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   },
   { _id: true, timestamps: true }
 );
@@ -38,7 +44,7 @@ const depositSchema = new mongoose.Schema(
 );
 
 depositSchema.virtual("balance").get(function () {
-  return Math.round((this.amount - (this.movements || []).reduce((s, m) => s + m.amount, 0)) * 100) / 100;
+  return Math.round((this.amount - (this.movements || []).filter((m) => !m.undoneAt).reduce((s, m) => s + m.amount, 0)) * 100) / 100;
 });
 depositSchema.set("toJSON", { virtuals: true });
 depositSchema.set("toObject", { virtuals: true });

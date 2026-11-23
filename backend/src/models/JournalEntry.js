@@ -40,6 +40,9 @@ const journalLineSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    // Report tags of the document the line came from (business line, category); blank = not set.
+    businessLine: { type: String, trim: true, default: "" },
+    reportCategory: { type: String, trim: true, default: "" },
   },
   { _id: false }
 );

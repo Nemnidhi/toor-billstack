@@ -32,6 +32,9 @@ const recurringBillingProfileSchema = new mongoose.Schema(
     nextBillingDate: { type: Date, required: true, index: true },
     // Property / centre this belongs to (profit by location). Free text, blank = not assigned.
     centre: { type: String, trim: true, maxlength: 80, default: "" },
+    // Report tags (see Business.reportingTags): business line (vertical) and category (horizontal).
+    businessLine: { type: String, trim: true, maxlength: 60, default: "" },
+    reportCategory: { type: String, trim: true, maxlength: 60, default: "" },
     endDate: { type: Date, default: null },
     status: { type: String, enum: ["DRAFT", "ACTIVE", "PAUSED", "COMPLETED", "CANCELLED"], default: "DRAFT", index: true },
     autoGenerateInvoice: { type: Boolean, default: true },

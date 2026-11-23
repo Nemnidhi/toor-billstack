@@ -16,6 +16,7 @@ const ROLES = [
   { value: "admin", label: "Admin", description: "Runs the workspace: clients, invoices, team and most settings." },
   { value: "accountant", label: "Accountant", description: "Invoices, payments, expenses, reports and accounting." },
   { value: "staff", label: "Staff", description: "Day-to-day work like clients, quotations and invoices." },
+  { value: "auditor", label: "Auditor (read-only)", description: "Sees invoices, expenses, reports and the books; changes nothing, except the areas you tick for them." },
 ];
 const roleLabel = Object.fromEntries(ROLES.map((role) => [role.value, role.label]));
 const roleTone = {
@@ -23,9 +24,10 @@ const roleTone = {
   admin: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
   accountant: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
   staff: "bg-slate-500/10 text-slate-700 dark:text-slate-300",
+  auditor: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
 };
 
-const blankForm = { name: "", email: "", password: "", role: "staff", isActive: true };
+const blankForm = { name: "", email: "", password: "", role: "staff", isActive: true, grants: [] };
 
 // Readable but strong: no look-alike characters (0/O, 1/l/I).
 const generatePassword = () => {
@@ -140,14 +142,14 @@ const TeamPage = () => {
   const toast = (message, tone = "success") => uiStore.getState().pushToast({ tone, message });
 
   const openNew = () => { setForm({ ...blankForm, password: generatePassword() }); setErrors({}); setFormError(""); setEditor({ mode: "new" }); };
-  const openEdit = (member) => { setForm({ name: member.name || "", email: member.email || "", password: "", role: member.role || "staff", isActive: member.isActive !== false }); setErrors({}); setFormError(""); setEditor({ mode: "edit", member }); };
+  const openEdit = (member) => { setForm({ name: member.name || "", email: member.email || "", password: "", role: member.role || "staff", isActive: member.isActive !== false, grants: member.permissions?.grants || [] }); setErrors({}); setFormError(""); setEditor({ mode: "edit", member }); };
 
   const saveMember = async (event) => {
     event.preventDefault();
     setSaving(true); setErrors({}); setFormError("");
     try {
       if (editor.mode === "edit") {
-        await updateTeamMemberRequest(editor.member._id || editor.member.id, { name: form.name, email: form.email, role: form.role, isActive: form.isActive });
+        await updateTeamMemberRequest(editor.member._id || editor.member.id, { name: form.name, email: form.email, role: form.role, isActive: form.isActive, grants: form.role === "auditor" ? form.grants : [] });
         toast(`${form.name} updated.`);
         setEditor(null);
       } else {
@@ -257,6 +259,7 @@ const TeamPage = () => {
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="truncate font-semibold">{member.name}{isSelf ? " (you)" : ""}</p>
                           <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${roleTone[member.role] || roleTone.staff}`}>{roleLabel[member.role] || member.role}</span>
+                          {member.role === "auditor" && member.permissions?.grants?.length ? <span className="text-xs" style={{ color: "var(--text-muted)" }}>+ {member.permissions.grants.length} area{member.permissions.grants.length === 1 ? "" : "s"}</span> : null}
                           {inactive ? <span className="rounded-full bg-rose-500/10 px-2.5 py-0.5 text-xs font-semibold text-rose-700 dark:text-rose-300">Inactive</span> : null}
                           {locked ? <span className="rounded-full bg-amber-500/10 px-2.5 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">Locked: too many attempts</span> : null}
                         </div>
@@ -317,6 +320,24 @@ const TeamPage = () => {
                 ))}
               </div>
             </fieldset>
+            {form.role === "auditor" && (result.auditorGrants || []).length ? (
+              <fieldset className="rounded-xl border p-3" style={{ borderColor: "var(--panel-border)", background: "var(--theme-surface-muted)" }}>
+                <legend className="form-label px-1">Also let them change (optional)</legend>
+                <p className="mb-2 text-xs" style={{ color: "var(--text-muted)" }}>Read-only everywhere else. In a ticked area they can do what an accountant can.</p>
+                <div className="grid gap-1.5 sm:grid-cols-2">
+                  {result.auditorGrants.map((grant) => (
+                    <label key={grant.key} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={form.grants.includes(grant.key)}
+                        onChange={(e) => setForm((f) => ({ ...f, grants: e.target.checked ? [...f.grants, grant.key] : f.grants.filter((k) => k !== grant.key) }))}
+                      />
+                      {grant.label}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            ) : null}
             {editor.mode === "edit" && String(editor.member._id || editor.member.id) !== myId ? (
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.isActive} onChange={(e) => setForm((f) => ({ ...f, isActive: e.target.checked }))} /> Can sign in</label>
             ) : null}

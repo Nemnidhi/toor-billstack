@@ -188,3 +188,32 @@ test("closed books stop a posting; a hand-entered salary expense in the same mon
   await assert.rejects(() => payroll.postRun({ businessId: business._id, userId: user._id, runId: got.run._id }), /books are closed/);
   assert.equal((await PayrollRun.findById(got.run._id)).status, "RECEIVED", "a refused posting leaves the run as it was");
 });
+
+// Client answers 23 Nov 2026, D25: Goldhawk's people are paid by Goldhawk. The CRM sends each
+// company's people with that company's key; a corrected sheet with nobody left for a company
+// withdraws that company's month (reversed if posted, refused once paid).
+test("D25: a corrected sheet with nobody for this company withdraws its month; refused once paid", async () => {
+  const { business, user, credential } = await setup();
+  const first = await payroll.receiveRun({ credential, payload: sheet({ runId: "run-oct-v1:GOLDHAWK" }) });
+  await payroll.postRun({ businessId: business._id, userId: user._id, runId: first.run._id });
+  assert.equal(await net(business._id, "2320"), -45650);
+
+  await assert.rejects(() => payroll.receiveRun({ credential, payload: { withdraw: true, runId: "x", month: "2026-10", version: 1 } }), /v1 is already here/);
+  const out = await payroll.receiveRun({ credential, payload: { withdraw: true, runId: "run-oct-v2:GOLDHAWK", month: "2026-10", version: 2 } });
+  assert.equal(out.outcome, "withdrawn");
+  const run = await PayrollRun.findById(first.run._id).lean();
+  assert.equal(run.status, "SUPERSEDED");
+  assert.ok(run.withdrawnAt);
+  assert.equal(await net(business._id, "2320"), 0, "the posting is reversed");
+  assert.equal(await net(business._id, "5050"), 0);
+  await balanced(business._id);
+  const again = await payroll.receiveRun({ credential, payload: { withdraw: true, runId: "run-oct-v2:GOLDHAWK", month: "2026-10", version: 2 } });
+  assert.equal(again.outcome, "nothing_to_withdraw");
+
+  // a later version brings people back; once paid, a withdrawal is refused
+  const v3 = await payroll.receiveRun({ credential, payload: sheet({ runId: "run-oct-v3:GOLDHAWK", version: 3 }) });
+  assert.equal(v3.outcome, "created");
+  await payroll.postRun({ businessId: business._id, userId: user._id, runId: v3.run._id });
+  await payroll.payRun({ businessId: business._id, userId: user._id, runId: v3.run._id, payload: { date: "2026-11-05", mode: "BANK" } });
+  await assert.rejects(() => payroll.receiveRun({ credential, payload: { withdraw: true, runId: "run-oct-v4:GOLDHAWK", month: "2026-10", version: 4 } }), /already paid in BillStack/);
+});

@@ -71,7 +71,7 @@ const PeriodLockPanel = ({ params, canLock }) => {
           <button type="button" className={button} disabled={busy || !value || value === state?.lockedUpTo} onClick={() => save(value)}><Lock className="h-3.5 w-3.5" /> Close up to this day</button>
           {state?.lockedUpTo ? <button type="button" className={ghost} disabled={busy} onClick={() => save("")}><Unlock className="h-3.5 w-3.5" /> Reopen</button> : null}
         </div>
-      ) : <p className="mt-2 text-xs text-slate-500">Only the owner or an admin can close or reopen the books.</p>}
+      ) : <p className="mt-2 text-xs text-slate-500">Only the owner, an admin or an accountant can close or reopen the books.</p>}
       {message ? <p className="mt-2 text-xs font-semibold text-slate-600 dark:text-slate-300">{message}</p> : null}
     </div>
   );
@@ -180,7 +180,7 @@ const GoldhawkPanel = () => {
   );
 };
 
-const ControlsTab = ({ selectedEntity, role }) => {
+const ControlsTab = ({ selectedEntity, role, grants = [] }) => {
   if (selectedEntity === "all") {
     return (
       <div className="space-y-4">
@@ -193,7 +193,7 @@ const ControlsTab = ({ selectedEntity, role }) => {
   return (
     <div className="space-y-4">
       <div className="grid gap-4 lg:grid-cols-2">
-        <PeriodLockPanel params={params} canLock={["owner", "admin"].includes(role)} />
+        <PeriodLockPanel params={params} canLock={["owner", "admin", "accountant"].includes(role) || (role === "auditor" && grants.includes("period_lock"))} />
         <GoldhawkPanel />
       </div>
       <EditLogPanel params={params} />

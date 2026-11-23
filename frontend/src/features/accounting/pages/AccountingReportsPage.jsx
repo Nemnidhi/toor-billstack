@@ -30,6 +30,7 @@ import {
   getAccountsRequest,
   downloadExportCsv,
   downloadExportXlsx,
+  downloadManagementReportPdf,
 } from "../api";
 import { authStore } from "../../../store/authStore";
 import { money } from "../../dashboard/reportPresentation";
@@ -40,6 +41,9 @@ import TdsTab from "./TdsTab";
 import ControlsTab, { GoldhawkBanner } from "./ControlsTab";
 import YearEndTab from "./YearEndTab";
 import PayrollTab from "./PayrollTab";
+import TagMatrixTab from "./TagMatrixTab";
+import api from "../../../api/axios";
+import { Layers } from "lucide-react";
 import { ShieldCheck } from "lucide-react";
 
 const AccountingReportsPage = () => {
@@ -47,6 +51,20 @@ const AccountingReportsPage = () => {
 
   const [activeTab, setActiveTab] = useState("overview");
   const [selectedEntity, setSelectedEntity] = useState("all");
+  // Every business the person can open (TOOR, Goldhawk, others the owner added, personal books).
+  const [entityList, setEntityList] = useState([]);
+  useEffect(() => {
+    let live = true;
+    const read = () => api.get("/business/billing-entities").then((r) => live && setEntityList(Array.isArray(r.data?.data) ? r.data.data : [])).catch(() => {});
+    read();
+    window.addEventListener("billstack-entities-changed", read);
+    return () => {
+      live = false;
+      window.removeEventListener("billstack-entities-changed", read);
+    };
+  }, []);
+  const hasGoldhawk = entityList.some((e) => e.billingEntityCode === "GOLDHAWK");
+  const entityValue = (e) => (e.isPrimary ? "TOOR" : e.billingEntityCode === "GOLDHAWK" ? "GOLDHAWK" : String(e.id));
   const [selectedPeriod, setSelectedPeriod] = useState("FY");
   const [dateRange, setDateRange] = useState({ from: "", to: "" });
   // Property / centre for the Profit & Loss ("" = all, "__unassigned__" = lines with no centre).
@@ -150,6 +168,32 @@ const AccountingReportsPage = () => {
     }
   }, [activeTab, selectedAccountId]);
 
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const handleDownloadPdf = async () => {
+    try {
+      setPdfLoading(true);
+      const blob = await downloadManagementReportPdf(queryParams);
+      const url = window.URL.createObjectURL(new Blob([blob], { type: "application/pdf" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", "management-report-" + selectedEntity + "-" + selectedPeriod + ".pdf");
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      let message = err.message;
+      try {
+        message = JSON.parse(await err.response?.data?.text?.())?.message || message;
+      } catch {
+        /* not JSON */
+      }
+      alert("PDF download failed: " + message);
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
   const handleDownloadXlsx = async () => {
     try {
       setExportLoading(true);
@@ -223,9 +267,15 @@ const AccountingReportsPage = () => {
               onChange={(e) => setSelectedEntity(e.target.value)}
               className="bg-transparent text-xs font-semibold text-slate-800 outline-none dark:text-slate-200"
             >
-              <option value="all">All Companies (Consolidated)</option>
-              <option value="TOOR">The Office On Rent (GST)</option>
-              <option value="GOLDHAWK">Goldhawk Infrabulls (Non-GST)</option>
+              <option value="all">{hasGoldhawk ? "TOOR + Goldhawk (Consolidated)" : "All Companies (Consolidated)"}</option>
+              {entityList.length ? entityList.map((e) => (
+                <option key={e.id} value={entityValue(e)}>{e.name} ({e.kind === "PERSONAL" ? "Personal" : e.gstEnabled ? "GST" : "Non-GST"})</option>
+              )) : (
+                <>
+                  <option value="TOOR">The Office On Rent (GST)</option>
+                  <option value="GOLDHAWK">Goldhawk Infrabulls (Non-GST)</option>
+                </>
+              )}
             </select>
           </div>
 
@@ -301,6 +351,17 @@ const AccountingReportsPage = () => {
             <RefreshCw className={"h-4 w-4 " + (loading ? "animate-spin" : "")} />
           </button>
 
+          {/* Management report: P&L with shares and pie charts, centres, business lines */}
+          <button
+            onClick={handleDownloadPdf}
+            disabled={pdfLoading}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+            title="Profit and loss with shares and pie charts, centres, business lines and categories"
+          >
+            <FileText className="h-4 w-4" />
+            <span>{pdfLoading ? "Preparing..." : "Report PDF"}</span>
+          </button>
+
           {/* Quick CA Audit Pack Download */}
           <button
             onClick={handleDownloadXlsx}
@@ -352,6 +413,7 @@ const AccountingReportsPage = () => {
         {[
           { key: "overview", label: "Overview", icon: BarChart3 },
           { key: "profit_loss", label: "Profit & Loss", icon: TrendingUp },
+          { key: "tag_matrix", label: "Business lines", icon: Layers },
           { key: "balance_sheet", label: "Balance Sheet", icon: Scale },
           { key: "trial_balance", label: "Trial Balance", icon: BookOpen },
           { key: "bank_book", label: "Bank & Cash Book", icon: Landmark },
@@ -941,7 +1003,11 @@ const AccountingReportsPage = () => {
       )}
 
       {activeTab === "controls" && (
-        <ControlsTab selectedEntity={selectedEntity} role={user?.role} />
+        <ControlsTab selectedEntity={selectedEntity} role={user?.role} grants={user?.permissions?.grants || []} />
+      )}
+
+      {activeTab === "tag_matrix" && (
+        <TagMatrixTab params={queryParams} />
       )}
 
       {activeTab === "payroll" && (

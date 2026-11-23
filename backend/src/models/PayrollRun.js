@@ -109,6 +109,10 @@ const payrollRunSchema = new mongoose.Schema(
       default: [],
     },
     supersededBy: { type: mongoose.Schema.Types.ObjectId, ref: "PayrollRun", default: null },
+    // A corrected sheet that no longer has anyone for this company (client answers D25:
+    // someone moved to the other company's payroll) withdraws the month here.
+    withdrawnAt: { type: Date, default: null },
+    withdrawnByExternalRunId: { type: String, default: "" },
     receivedAt: { type: Date, default: Date.now },
   },
   { timestamps: true }

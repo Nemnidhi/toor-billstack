@@ -6,7 +6,8 @@ const JournalEntry = require("../models/JournalEntry");
 const Account = require("../models/Account");
 const AppError = require("../utils/appError");
 const { toMinorUnits, fromMinorUnits } = require("../utils/money");
-const { parseBankStatementCsv, parseBankStatementXlsx } = require("../utils/csv-parser");
+const { parseBankStatementCsv, parseBankStatementXlsx, parseBankStatementGrid, checkRunningBalances } = require("../utils/csv-parser");
+const { statementPdfToGrid } = require("../utils/statement-pdf");
 const { ensureDefaultAccounts } = require("./accounting.service");
 
 /**
@@ -20,16 +21,30 @@ const importBankStatementFile = async ({
   fileBase64 = "",
   fileName = "",
   buffer = null,
+  password = "",
+  autoMatch = true,
+  userId = null,
 }) => {
   const account = await BankAccount.findOne({ _id: bankAccountId, businessId });
   if (!account) throw new AppError("Bank account not found for this billing entity", 404);
 
   let parsedRows = [];
-  if (buffer) {
-    parsedRows = parseBankStatementXlsx({ buffer, bankAccountId });
-  } else if (fileBase64) {
-    const buf = Buffer.from(fileBase64, "base64");
-    parsedRows = parseBankStatementXlsx({ buffer: buf, bankAccountId });
+  let source = "EXCEL_CSV";
+  let unclear = "";
+  const fileBuffer = buffer || (fileBase64 ? Buffer.from(fileBase64, "base64") : null);
+  const isPdf = fileBuffer && (fileBuffer.subarray(0, 5).toString("ascii") === "%PDF-" || /\.pdf$/i.test(fileName));
+  if (isPdf) {
+    // The PDF's own text first (free); a scan goes to the document reader.
+    let grid = await statementPdfToGrid(fileBuffer, { password });
+    source = "PDF_TEXT";
+    if (!grid) {
+      if (password) throw new AppError("This PDF is a scan protected by a password. Download an unlocked copy, or the Excel / CSV statement.", 400);
+      ({ grid, unclear } = await require("./statement-reader.service").readScannedStatement({ buffer: fileBuffer }));
+      source = "PDF_READ_BY_AI";
+    }
+    parsedRows = parseBankStatementGrid({ rows: grid, bankAccountId });
+  } else if (fileBuffer) {
+    parsedRows = parseBankStatementXlsx({ buffer: fileBuffer, bankAccountId });
   } else if (csvText) {
     parsedRows = parseBankStatementCsv({ csvText, bankAccountId });
   } else {
@@ -84,15 +99,20 @@ const importBankStatementFile = async ({
     }
   }
 
-  // Automatically generate match suggestions for new items
-  await generateMatchSuggestions({ businessId, bankAccountId });
+  // Suggest matches for the new rows, and match on their own the ones that can only be one entry.
+  const { autoMatched = 0 } = (await generateMatchSuggestions({ businessId, bankAccountId, autoMatch })) || {};
 
   return {
     batchId,
+    source,
     totalRows: parsedRows.length,
     importedCount,
     duplicateCount,
     skippedCount: duplicateCount,
+    unresolvedCount: parsedRows.unresolvedCount || 0,
+    balanceCheck: checkRunningBalances(parsedRows),
+    autoMatched,
+    unclear,
   };
 };
 
@@ -103,13 +123,14 @@ const importBankStatementCsv = async (args) => {
 /**
  * Generates match suggestions between statement rows and unreconciled journal lines.
  */
-const generateMatchSuggestions = async ({ businessId, bankAccountId }) => {
+const generateMatchSuggestions = async ({ businessId, bankAccountId, autoMatch = false }) => {
   await ensureDefaultAccounts({ businessId });
 
   const bankAccountModel = await BankAccount.findOne({ _id: bankAccountId, businessId });
   if (!bankAccountModel) throw new AppError("Bank account not found", 404);
 
-  const targetAccount = await Account.findOne({ businessId, code: "1020" });
+  // A credit card reconciles against what is owed on it (2060), a bank account against the bank (1020).
+  const targetAccount = await Account.findOne({ businessId, code: bankAccountModel.accountType === "CREDIT_CARD" ? "2060" : "1020" });
   if (!targetAccount) return;
 
   const unmatchedTransactions = await BankStatementTransaction.find({
@@ -137,6 +158,7 @@ const generateMatchSuggestions = async ({ businessId, bankAccountId }) => {
     "lines.accountId": targetAccount._id,
   });
 
+  const found = [];
   for (const stmt of unmatchedTransactions) {
     // Statement INFLOW (Deposit) matches Journal DEBIT on Bank (1020)
     // Statement OUTFLOW (Withdrawal) matches Journal CREDIT on Bank (1020)
@@ -189,9 +211,27 @@ const generateMatchSuggestions = async ({ businessId, bankAccountId }) => {
       }
     });
 
-    if (matchingEntries.length === 1 && matchingEntries[0].confidence === "EXACT") {
-      stmt.status = "SUGGESTED_MATCH";
+    found.push({ stmt, matchingEntries });
+  }
+
+  // Automatic match: the row has exactly one possible entry, by reference or within 3 days, and that
+  // entry is not a candidate for any other row. Anything less certain stays a suggestion.
+  const candidateCount = new Map();
+  for (const { matchingEntries } of found) {
+    for (const m of matchingEntries) candidateCount.set(String(m.journalEntryId), (candidateCount.get(String(m.journalEntryId)) || 0) + 1);
+  }
+  let autoMatched = 0;
+  for (const { stmt, matchingEntries } of found) {
+    const only = matchingEntries.length === 1 ? matchingEntries[0] : null;
+    if (autoMatch && only && ["EXACT", "HIGH"].includes(only.confidence) && candidateCount.get(String(only.journalEntryId)) === 1 && !stmt.autoMatchRejected) {
+      stmt.status = "MATCHED";
+      stmt.reconciledJournalEntryId = only.journalEntryId;
+      stmt.reconciledAt = new Date();
+      stmt.reconciledBy = null;
+      stmt.matchedAutomatically = true;
       stmt.suggestedMatches = matchingEntries;
+      stmt.notes = `Matched automatically: ${only.matchReason}`;
+      autoMatched++;
     } else if (matchingEntries.length > 0) {
       stmt.status = "SUGGESTED_MATCH";
       stmt.suggestedMatches = matchingEntries;
@@ -202,6 +242,7 @@ const generateMatchSuggestions = async ({ businessId, bankAccountId }) => {
 
     await stmt.save();
   }
+  return { autoMatched };
 };
 
 /**
@@ -252,11 +293,14 @@ const unmatchTransaction = async ({ businessId, bankTransactionId, userId }) => 
   const stmt = await BankStatementTransaction.findOne({ _id: bankTransactionId, businessId });
   if (!stmt) throw new AppError("Bank statement transaction not found", 404);
 
+  if (stmt.matchedAutomatically) stmt.autoMatchRejected = true;
   stmt.status = "UNMATCHED";
   stmt.reconciledJournalEntryId = null;
   stmt.reconciledLineId = "";
   stmt.reconciledAt = null;
   stmt.reconciledBy = null;
+  stmt.matchedAutomatically = false;
+  stmt.notes = "";
   await stmt.save();
 
   await generateMatchSuggestions({ businessId, bankAccountId: stmt.bankAccountId });
@@ -273,7 +317,7 @@ const getReconciliationSummary = async ({ businessId, bankAccountId, asOfDate = 
   if (!account) throw new AppError("Bank account not found", 404);
 
   await ensureDefaultAccounts({ businessId });
-  const targetAccount = await Account.findOne({ businessId, code: "1020" });
+  const targetAccount = await Account.findOne({ businessId, code: account.accountType === "CREDIT_CARD" ? "2060" : "1020" });
 
   const dateLimit = new Date(asOfDate);
   dateLimit.setHours(23, 59, 59, 999);

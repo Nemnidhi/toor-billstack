@@ -30,6 +30,17 @@ const detail = asyncHandler(async (req, res) => {
   res.status(200).json({ message: "Expense fetched successfully", data: expense });
 });
 
+// Bill photo / PDF -> the expense form's fields (Claude vision). Nothing is saved.
+const readBill = asyncHandler(async (req, res) => {
+  const { fileBase64, fileName } = req.body || {};
+  const data = await require("../services/bill-reader.service").readBill({ businessId: req.tenant.businessId, userId: req.user._id, fileBase64, fileName });
+  res.json({ success: true, data });
+});
+
+const readBillStatus = asyncHandler(async (_req, res) => {
+  res.json({ success: true, data: { enabled: require("../services/bill-reader.service").isConfigured() } });
+});
+
 const create = asyncHandler(async (req, res) => {
   const expense = await createExpense({ businessId: req.tenant.businessId, userId: req.user._id, payload: req.body });
   res.status(201).json({ message: "Expense created successfully", data: expense });
@@ -45,4 +56,4 @@ const cancel = asyncHandler(async (req, res) => {
   res.status(200).json({ message: "Expense cancelled successfully", data: expense });
 });
 
-module.exports = { cancel, categories, create, detail, list, summary, update };
+module.exports = { cancel, categories, create, detail, list, readBill, readBillStatus, summary, update };

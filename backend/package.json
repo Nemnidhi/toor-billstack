@@ -24,6 +24,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.12.0",
     "bcryptjs": "^3.0.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -38,6 +39,7 @@
     "morgan": "^1.12.1",
     "multer": "^2.5.0",
     "nodemailer": "^10.6.1",
+    "pdfjs-dist": "^6.5.438",
     "pdfmake": "^0.2.20",
     "razorpay": "^2.9.6",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"

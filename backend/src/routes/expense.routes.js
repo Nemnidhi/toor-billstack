@@ -14,6 +14,8 @@ router.use(authMiddleware, tenantMiddleware, requireActiveSubscription(), requir
 router.get("/", controller.list);
 router.get("/summary", controller.summary);
 router.get("/categories", controller.categories);
+router.get("/read-bill", controller.readBillStatus);
+router.post("/read-bill", permit("owner", "admin", "staff", "accountant"), controller.readBill);
 router.get("/:expenseId", validateObjectIdParam("expenseId"), controller.detail);
 router.post("/", permit("owner", "admin", "staff", "accountant"), controller.create);
 router.put("/:expenseId", validateObjectIdParam("expenseId"), permit("owner", "admin", "accountant"), controller.update);

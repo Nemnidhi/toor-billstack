@@ -6,6 +6,7 @@ import {
   listSuppliersRequest,
 } from "../../auth/api";
 import CentreInput, { forgetCentres } from "../../../components/ui/CentreInput";
+import ReportTagFields from "../../../components/ui/ReportTagFields";
 import DocumentsPanel from "../../../components/ui/DocumentsPanel";
 
 const initialItem = {
@@ -34,6 +35,8 @@ const PurchasesPage = () => {
     paymentStatus: "unpaid",
     purchaseDate: new Date().toISOString().slice(0, 10),
     centre: "",
+    businessLine: "",
+    reportCategory: "",
     supplierInvoiceNumber: "",
     supplierInvoiceDate: "",
     itcEligible: true,
@@ -116,6 +119,8 @@ const PurchasesPage = () => {
       paymentStatus: "unpaid",
       purchaseDate: new Date().toISOString().slice(0, 10),
       centre: "",
+    businessLine: "",
+    reportCategory: "",
       supplierInvoiceNumber: "",
       supplierInvoiceDate: "",
       itcEligible: true,
@@ -215,6 +220,12 @@ const PurchasesPage = () => {
               <span className="mb-2 block text-sm text-slate-300">Centre / property (optional)</span>
               <CentreInput value={form.centre} onChange={(value) => setForm((current) => ({ ...current, centre: value }))} className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white" />
             </label>
+            <ReportTagFields
+              value={form}
+              onChange={(field, value) => setForm((current) => ({ ...current, [field]: value }))}
+              className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white"
+              labelClassName="mb-2 block text-sm text-slate-300"
+            />
             <label className="block">
               <span className="mb-2 block text-sm text-slate-300">Paid amount</span>
               <input name="paidAmount" value={form.paidAmount} onChange={handleFormChange} className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white" />

@@ -278,6 +278,10 @@ export const getExpenseRequest = async (expenseId) => {
   return response.data.data;
 };
 
+// Bill photo / PDF -> expense form fields (read by Claude on the server; nothing is saved).
+export const readBillStatusRequest = async () => (await api.get("/expenses/read-bill")).data.data;
+export const readBillRequest = async (payload) => (await api.post("/expenses/read-bill", payload, { timeout: 120000 })).data.data;
+
 export const createExpenseRequest = async (payload) => {
   const response = await api.post("/expenses", payload);
   return response.data.data;
@@ -571,8 +575,9 @@ export const createRecurringProfileRequest = async (payload) => {
   return response.data.data;
 };
 
-export const setRecurringCentreRequest = async (profileId, centre) => {
-  const response = await api.post(`/workflows/recurring/${profileId}/centre`, { centre });
+// Centre, business line and category for future invoices from a recurring profile.
+export const setRecurringCentreRequest = async (profileId, centre, tags = {}) => {
+  const response = await api.post(`/workflows/recurring/${profileId}/centre`, { centre, ...tags });
   return response.data.data;
 };
 
@@ -708,7 +713,8 @@ export const changeSubscriptionPlanRequest = async (payload) => {
 
 export const listTeamMembersRequest = async (params) => {
   const response = await api.get("/team", { params });
-  return response.data.data;
+  // auditorGrants: the areas an auditor can be given.
+  return { ...response.data.data, auditorGrants: response.data.auditorGrants || [] };
 };
 
 export const createTeamMemberRequest = async (payload) => {

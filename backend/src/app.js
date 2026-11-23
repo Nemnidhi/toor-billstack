@@ -54,6 +54,8 @@ const statementImportPaths = new Set([
   "/api/accounting/bank-statements/import",
   "/api/accounting/tds/26as/import",
   "/api/gst/2b/import",
+  // a bill photo / PDF to read into the expense form (5 MB)
+  "/api/expenses/read-bill",
 ]);
 const statementJsonParser = express.json({ limit: "8mb" });
 const corsMiddleware = cors(buildCorsOptions());

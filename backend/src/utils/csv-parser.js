@@ -47,10 +47,13 @@ const parseCsvLines = (csvText) => {
  * Normalizes Date string to UTC Date object.
  * Supports: DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD, DD/MM/YY
  */
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const parseDateString = (dateVal) => {
   if (!dateVal) return null;
   if (dateVal instanceof Date) {
-    return isNaN(dateVal.getTime()) ? null : dateVal;
+    if (isNaN(dateVal.getTime())) return null;
+    // Excel dates arrive as local midnight; keep the calendar day (in IST, UTC is the day before).
+    return new Date(Date.UTC(dateVal.getFullYear(), dateVal.getMonth(), dateVal.getDate()));
   }
   const s = String(dateVal).trim();
 
@@ -60,8 +63,27 @@ const parseDateString = (dateVal) => {
     return isNaN(d.getTime()) ? null : d;
   }
 
-  // DD/MM/YYYY or DD-MM-YYYY
-  const parts = s.split(/[\/\-]/);
+  // YYYY/MM/DD
+  const ymd = s.match(/^(\d{4})[\/.](\d{1,2})[\/.](\d{1,2})$/);
+  if (ymd) {
+    const d = new Date(Date.UTC(+ymd[1], +ymd[2] - 1, +ymd[3]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // DD MMM YYYY / DD-MMM-YY (month written as a word)
+  const named = s.match(/^(\d{1,2})[\s\/\-.]+([A-Za-z]{3,9})[\s\/\-.,]+(\d{2,4})$/);
+  if (named) {
+    const month = MONTHS.indexOf(named[2].slice(0, 3).toLowerCase());
+    let year = parseInt(named[3], 10);
+    if (year < 100) year += 2000;
+    if (month >= 0) {
+      const d = new Date(Date.UTC(year, month, parseInt(named[1], 10)));
+      return isNaN(d.getTime()) ? null : d;
+    }
+  }
+
+  // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+  const parts = s.split(/[\/\-.]/);
   if (parts.length === 3) {
     const day = parseInt(parts[0], 10);
     const month = parseInt(parts[1], 10);
@@ -74,8 +96,7 @@ const parseDateString = (dateVal) => {
     }
   }
 
-  const fallback = new Date(s);
-  return isNaN(fallback.getTime()) ? null : fallback;
+  return null;
 };
 
 /**
@@ -99,7 +120,7 @@ const parseBankStatementGrid = ({ rows, bankAccountId }) => {
 
   // Locate header index (search for Date and Narration/Particulars/Description)
   let headerRowIndex = -1;
-  for (let r = 0; r < Math.min(rows.length, 10); r++) {
+  for (let r = 0; r < Math.min(rows.length, 40); r++) {
     const row = rows[r];
     if (!Array.isArray(row)) continue;
     const lower = row.map((c) => String(c || "").toLowerCase());
@@ -124,9 +145,12 @@ const parseBankStatementGrid = ({ rows, bankAccountId }) => {
   const colDebit = headers.findIndex((h) => h.includes("withdraw") || h.includes("debit") || h === "dr");
   const colCredit = headers.findIndex((h) => h.includes("deposit") || h.includes("credit") || h === "cr");
   const colBalance = headers.findIndex((h) => h.includes("bal"));
+  // One amount column with a Dr / Cr column (or Dr / Cr written on the amount) instead of two columns.
+  const colAmount = colDebit === -1 && colCredit === -1 ? headers.findIndex((h) => /^(txn |transaction )?amount/.test(h.trim()) || h.trim() === "amt") : -1;
+  const colDrCr = headers.findIndex((h) => /^(dr\s*\/\s*cr|cr\s*\/\s*dr|type|txn type|debit\s*\/\s*credit)$/.test(h.trim()));
 
-  if (colDate === -1 || colDesc === -1 || (colDebit === -1 && colCredit === -1)) {
-    throw new AppError("Could not identify required statement columns (Date, Description/Narration, Debit/Credit)", 400);
+  if (colDate === -1 || colDesc === -1 || (colDebit === -1 && colCredit === -1 && colAmount === -1)) {
+    throw new AppError("Could not find the statement's columns (Date, Narration / Particulars, and Withdrawal / Deposit or Amount). Check that the file is the bank statement itself.", 400);
   }
 
   const parsedTransactions = [];
@@ -148,12 +172,26 @@ const parseBankStatementGrid = ({ rows, bankAccountId }) => {
 
     const debitAmt = colDebit !== -1 ? parseNumericAmount(row[colDebit]) : 0;
     const creditAmt = colCredit !== -1 ? parseNumericAmount(row[colCredit]) : 0;
-    const balanceAmt = colBalance !== -1 ? parseNumericAmount(row[colBalance]) : null;
+    const balanceText = colBalance !== -1 ? String(row[colBalance] ?? "").trim() : "";
+    // An overdrawn balance is shown as "1,200.00 Dr" or "-1,200.00".
+    const balanceAmt = balanceText === "" ? null : (/dr\b|^-/i.test(balanceText) ? -1 : 1) * parseNumericAmount(balanceText);
 
     let direction = "";
     let amount = 0;
 
-    if (debitAmt > 0 && creditAmt === 0) {
+    if (colAmount !== -1) {
+      const amountText = String(row[colAmount] ?? "").trim();
+      amount = parseNumericAmount(amountText);
+      if (amount <= 0) {
+        // An opening-balance line: no movement, but its balance tells the next row's direction.
+        if (balanceAmt !== null) parsedTransactions.push({ anchor: true, transactionDate: txnDate, amount: 0, direction: "", runningBalance: balanceAmt });
+        continue;
+      }
+      const kind = `${colDrCr !== -1 ? String(row[colDrCr] || "") : ""} ${amountText}`.toLowerCase();
+      if (/\bdr\b|debit|withdraw|^\s*-|\s-/.test(kind)) direction = "OUTFLOW";
+      else if (/\bcr\b|credit|deposit/.test(kind)) direction = "INFLOW";
+      else direction = "?"; // worked out from the running balance below
+    } else if (debitAmt > 0 && creditAmt === 0) {
       direction = "OUTFLOW";
       amount = debitAmt;
     } else if (creditAmt > 0 && debitAmt === 0) {
@@ -166,15 +204,11 @@ const parseBankStatementGrid = ({ rows, bankAccountId }) => {
       direction = "INFLOW";
       amount = creditAmt;
     } else {
+      if (balanceAmt !== null) parsedTransactions.push({ anchor: true, transactionDate: txnDate, amount: 0, direction: "", runningBalance: balanceAmt });
       continue; // Skip zero-amount movement
     }
 
     const amountMinor = toMinorUnits(amount, "Transaction amount");
-    const dateStr = txnDate.toISOString().slice(0, 10);
-
-    // Build unique row fingerprint
-    const fpString = `${bankAccountId}:${dateStr}:${reference}:${amountMinor}:${direction}:${description.slice(0, 40)}`;
-    const importFingerprint = crypto.createHash("sha256").update(fpString).digest("hex");
 
     parsedTransactions.push({
       transactionDate: txnDate,
@@ -185,11 +219,76 @@ const parseBankStatementGrid = ({ rows, bankAccountId }) => {
       amount,
       amountMinor,
       runningBalance: balanceAmt,
-      importFingerprint,
     });
   }
 
-  return parsedTransactions;
+  resolveDirections(parsedTransactions);
+  const movements = parsedTransactions.filter((t) => !t.anchor);
+  const resolved = movements.filter((t) => t.direction !== "?");
+
+  // Fingerprints make a re-import skip rows already in. Two identical rows in one file (two ₹10
+  // charges on the same day) are told apart by their order; the first keeps the plain fingerprint.
+  const seen = new Map();
+  for (const t of resolved) {
+    const dateStr = t.transactionDate.toISOString().slice(0, 10);
+    const fpString = `${bankAccountId}:${dateStr}:${t.reference}:${t.amountMinor}:${t.direction}:${t.description.slice(0, 40)}`;
+    const n = (seen.get(fpString) || 0) + 1;
+    seen.set(fpString, n);
+    t.importFingerprint = crypto.createHash("sha256").update(n === 1 ? fpString : `${fpString}#${n}`).digest("hex");
+  }
+  resolved.unresolvedCount = movements.length - resolved.length;
+  return resolved;
+};
+
+const signed = (t) => (t.direction === "INFLOW" ? t.amount : -t.amount);
+const near = (a, b) => Math.abs(a - b) < 0.011;
+
+/** Statements list oldest first or newest first: the running balance tells which. */
+const statementOrder = (rows) => {
+  let asc = 0;
+  let desc = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const [prev, cur] = [rows[i - 1], rows[i]];
+    if (prev.runningBalance === null || cur.runningBalance === null) continue;
+    const delta = cur.runningBalance - prev.runningBalance;
+    if (near(Math.abs(delta), cur.amount)) asc++;
+    if (near(Math.abs(delta), prev.amount)) desc++;
+  }
+  return desc > asc ? "DESC" : "ASC";
+};
+
+/** Rows whose direction was not printed ("?") take it from how the balance moved. */
+const resolveDirections = (rows) => {
+  if (!rows.some((t) => t.direction === "?")) return;
+  const order = statementOrder(rows);
+  rows.forEach((t, i) => {
+    if (t.direction !== "?" || t.runningBalance === null) return;
+    const other = order === "ASC" ? rows[i - 1] : rows[i + 1];
+    if (!other || other.runningBalance === null) return;
+    const delta = t.runningBalance - other.runningBalance;
+    if (near(Math.abs(delta), t.amount)) t.direction = delta > 0 ? "INFLOW" : "OUTFLOW";
+  });
+};
+
+/**
+ * Checks every row against the running balance printed beside it: a misread amount or a missing
+ * row shows up as a break. Returns { checked, matched, order, breaks: [{ date, description, expected, printed }] }.
+ */
+const checkRunningBalances = (rows) => {
+  const order = statementOrder(rows);
+  const list = order === "ASC" ? rows : [...rows].reverse();
+  const breaks = [];
+  let checked = 0;
+  for (let i = 1; i < list.length; i++) {
+    const [prev, cur] = [list[i - 1], list[i]];
+    if (prev.runningBalance === null || cur.runningBalance === null) continue;
+    checked++;
+    const expected = Math.round((prev.runningBalance + signed(cur)) * 100) / 100;
+    if (!near(expected, cur.runningBalance)) {
+      breaks.push({ date: cur.transactionDate.toISOString().slice(0, 10), description: cur.description.slice(0, 80), expected, printed: cur.runningBalance });
+    }
+  }
+  return { checked, matched: checked - breaks.length, order, breaks: breaks.slice(0, 10), breakCount: breaks.length };
 };
 
 /**
@@ -206,7 +305,10 @@ const parseBankStatementCsv = ({ csvText, bankAccountId }) => {
 const parseBankStatementXlsx = ({ buffer, bankAccountId, sheetName = null }) => {
   let workbook;
   try {
-    workbook = XLSX.read(buffer, { type: "buffer", cellDates: false });
+    // Excel files (zip / old binary) keep their real date cells. Text files (CSV, the HTML ".xls"
+    // some banks send) are read as typed: parsing "05/11/26" would take it month-first.
+    const binary = buffer[0] === 0x50 && buffer[1] === 0x4b ? true : buffer[0] === 0xd0 && buffer[1] === 0xcf;
+    workbook = XLSX.read(buffer, binary ? { type: "buffer", cellDates: true } : { type: "buffer", raw: true });
   } catch (err) {
     throw new AppError("Invalid or corrupted Excel file: " + err.message, 400);
   }
@@ -217,7 +319,10 @@ const parseBankStatementXlsx = ({ buffer, bankAccountId, sheetName = null }) => 
 
   const targetSheet = sheetName && workbook.Sheets[sheetName] ? sheetName : workbook.SheetNames[0];
   const worksheet = workbook.Sheets[targetSheet];
-  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: "" });
+  // Real date cells come as dates (their display format may be month-first); the rest as shown.
+  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true, defval: "" }).map((row) =>
+    row.map((cell) => (cell instanceof Date || typeof cell === "string" ? cell : typeof cell === "number" ? cell : String(cell ?? "")))
+  );
 
   return parseBankStatementGrid({ rows, bankAccountId });
 };
@@ -227,6 +332,7 @@ module.exports = {
   parseDateString,
   parseNumericAmount,
   parseBankStatementGrid,
+  checkRunningBalances,
   parseBankStatementCsv,
   parseBankStatementXlsx,
 };

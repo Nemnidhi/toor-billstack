@@ -9,6 +9,7 @@ const {
   buildSort,
 } = require("../utils/queryFeatures");
 const { hashPassword, revokeAllUserRefreshTokens } = require("../services/auth.service");
+const { cleanGrants, AUDITOR_GRANTS } = require("../constants/auditor-grants");
 
 const userSortFields = ["name", "email", "role", "createdAt", "updatedAt", "lastLoginAt"];
 
@@ -43,13 +44,15 @@ const listTeamMembers = asyncHandler(async (req, res) => {
   }
 
   const [items, total] = await Promise.all([
-    User.find(filters).select("name email role isActive lastLoginAt passwordChangedAt lockedUntil createdAt updatedAt").sort(sort).skip(skip).limit(limit),
+    User.find(filters).select("name email role permissions.grants isActive lastLoginAt passwordChangedAt lockedUntil createdAt updatedAt").sort(sort).skip(skip).limit(limit),
     User.countDocuments(filters),
   ]);
 
   res.status(200).json({
     message: "Team members fetched successfully",
     data: buildPaginatedResponse({ items, total, page, limit }),
+    // The areas an auditor can be given (Team > role Auditor).
+    auditorGrants: AUDITOR_GRANTS.map(({ key, label }) => ({ key, label })),
   });
 });
 
@@ -104,10 +107,12 @@ const createTeamMember = asyncHandler(async (req, res) => {
       password,
       role: req.body.role,
       isActive: req.body.isActive === undefined ? true : `${req.body.isActive}` === "true",
+      permissions: { grants: req.body.role === "auditor" ? cleanGrants(req.body.grants) : [] },
     });
   }
 
-  const childEntities = await Business.find({ billingParentId: businessId });
+  // Every company of the group, but never personal books (those are given by hand) or archived ones.
+  const childEntities = await Business.find({ billingParentId: businessId, entityKind: { $ne: "PERSONAL" }, isDisabled: { $ne: true } });
   for (const child of childEntities) {
     await Membership.findOneAndUpdate(
       { userId: user._id, businessId: child._id },
@@ -172,6 +177,12 @@ const updateTeamMember = asyncHandler(async (req, res) => {
   if (req.body.role) {
     teamMember.role = req.body.role;
   }
+  // Areas an auditor may also change (client D11); cleared for every other role.
+  if (req.body.grants !== undefined || req.body.role) {
+    teamMember.permissions = teamMember.permissions || {};
+    teamMember.permissions.grants = teamMember.role === "auditor" ? cleanGrants(req.body.grants ?? teamMember.permissions.grants) : [];
+    teamMember.markModified("permissions");
+  }
 
   if (req.body.password) {
     teamMember.password = await hashPassword(req.body.password);
@@ -198,6 +209,7 @@ const updateTeamMember = asyncHandler(async (req, res) => {
       name: teamMember.name,
       email: teamMember.email,
       role: teamMember.role,
+      grants: teamMember.permissions?.grants || [],
       isActive: teamMember.isActive,
       passwordChangedAt: teamMember.passwordChangedAt,
       businessId: teamMember.businessId,

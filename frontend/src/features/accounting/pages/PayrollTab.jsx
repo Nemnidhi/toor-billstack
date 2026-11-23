@@ -30,7 +30,8 @@ const STATUS = {
   PAID: ["Paid", "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"],
   SUPERSEDED: ["Replaced by a newer version", "bg-slate-100 text-slate-500 dark:bg-slate-800"],
 };
-const Badge = ({ status }) => <span className={`rounded-lg px-2 py-0.5 text-[11px] font-bold ${STATUS[status]?.[1] || ""}`}>{STATUS[status]?.[0] || status}</span>;
+// A month withdrawn by the CRM (nobody on the corrected sheet is paid by this company) shows as such.
+const Badge = ({ status, withdrawn }) => <span className={`rounded-lg px-2 py-0.5 text-[11px] font-bold ${STATUS[status]?.[1] || ""}`}>{withdrawn ? "Withdrawn - nobody paid by this company now" : STATUS[status]?.[0] || status}</span>;
 const save = (blob, name, type) => {
   const url = URL.createObjectURL(new Blob([blob], { type }));
   const a = document.createElement("a");
@@ -94,7 +95,7 @@ const RunDetail = ({ runId, params, bookAs, onChanged }) => {
       <div className={`${card} overflow-x-auto`}>
         <div className="flex flex-wrap items-center gap-3">
           <h3 className="text-sm font-bold">{run.monthLabel} <span className="text-slate-500">v{run.version}</span></h3>
-          <Badge status={run.status} />
+          <Badge status={run.status} withdrawn={Boolean(run.withdrawnAt)} />
           <span className="text-xs text-slate-500">Finalised in the CRM{run.finalisedBy ? ` by ${run.finalisedBy}` : ""}{run.finalisedAt ? ` on ${day(run.finalisedAt)}` : ""} · received {day(run.receivedAt)}</span>
           <button type="button" className={`${ghost} ml-auto`} onClick={async () => { try { save(await downloadPayrollRegister(run._id, params), `salary-register-${run.month}-v${run.version}.csv`, "text/csv"); } catch (err) { setError(errorText(err)); } }}><Download size={14} /> Salary register (CSV)</button>
         </div>
@@ -323,7 +324,7 @@ const PayrollTab = ({ selectedEntity }) => {
               {list.runs.map((r) => (
                 <tr key={r._id} className={`cursor-pointer ${r._id === runId ? "bg-brand-50/60 dark:bg-slate-800" : "hover:bg-slate-50 dark:hover:bg-slate-800/60"}`} onClick={() => setRunId(r._id)}>
                   <td className={td}><span className="font-semibold">{r.monthLabel}</span> <span className="text-slate-500">v{r.version}</span></td>
-                  <td className={td}><Badge status={r.status} /></td>
+                  <td className={td}><Badge status={r.status} withdrawn={Boolean(r.withdrawnAt)} /></td>
                   <td className={tdr}>{r.employees}</td><td className={tdr}>{money(r.gross)}</td><td className={tdr}>{money(r.net)}</td><td className={tdr}>{money(r.paid)}</td>
                 </tr>
               ))}

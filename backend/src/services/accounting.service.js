@@ -11,14 +11,22 @@ const { fromMinorUnits, toMinorUnits } = require("../utils/money");
 // third decimal (old purchase lines can carry one); it rounds to the paisa.
 const paise = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100);
 const centreOf = (value) => String(value || "").trim();
-const postingLine = (account, debitMinor, creditMinor, description, centre = "") => ({
+/**
+ * The tags a journal line carries: centre (property), business line and report category.
+ * Takes a document (invoice, expense, purchase...), a tags object, or a plain centre name.
+ */
+const tagsOf = (source = "") =>
+  typeof source === "string"
+    ? { centre: centreOf(source), businessLine: "", reportCategory: "" }
+    : { centre: centreOf(source?.centre), businessLine: centreOf(source?.businessLine), reportCategory: centreOf(source?.reportCategory) };
+const postingLine = (account, debitMinor, creditMinor, description, tags = "") => ({
   accountId: account._id,
   accountCode: account.code,
   accountName: account.name,
   debitMinor,
   creditMinor,
   description,
-  centre: centreOf(centre),
+  ...tagsOf(tags),
 });
 // Goldhawk is kept out of GST while it has no GSTIN. Once it registers (GST on in its settings
 // with a GSTIN) its bills post GST like TOOR's.
@@ -144,7 +152,7 @@ const postJournalEntry = async ({
       debitMinor,
       creditMinor,
       description: line.description || "",
-      centre: centreOf(line.centre),
+      ...tagsOf(line),
     };
   });
 
@@ -306,8 +314,8 @@ const buildInvoicePostingLines = async ({ invoice, business, session }) => {
     });
   }
 
-  const centre = centreOf(invoice.centre);
-  return lines.map((line) => ({ ...line, centre }));
+  const tags = tagsOf(invoice);
+  return lines.map((line) => ({ ...line, ...tags }));
 };
 
 const postInvoiceJournalEntry = async ({ invoice, business, userId, session, sourceKey, description }) => {
@@ -334,7 +342,10 @@ const escapeKey = (value) => {
   return text;
 };
 
-const netLineKey = (line) => `${String(line.accountId)}|${centreOf(line.centre)}`;
+const netLineKey = (line) => {
+  const tags = tagsOf(line);
+  return `${String(line.accountId)}|${tags.centre}|${tags.businessLine}|${tags.reportCategory}`;
+};
 
 /**
  * What the books currently hold for one source record: every journal entry whose
@@ -353,7 +364,7 @@ const netPostingsFor = async ({ businessId, keyType, recordId, session }) => {
   for (const entry of entries) {
     for (const line of entry.lines || []) {
       const key = netLineKey(line);
-      const row = byAccount.get(key) || { accountId: line.accountId, accountCode: line.accountCode, accountName: line.accountName, centre: centreOf(line.centre), netMinor: 0 };
+      const row = byAccount.get(key) || { accountId: line.accountId, accountCode: line.accountCode, accountName: line.accountName, ...tagsOf(line), netMinor: 0 };
       row.netMinor += Number(line.debitMinor || 0) - Number(line.creditMinor || 0);
       byAccount.set(key, row);
     }
@@ -372,7 +383,7 @@ const reversalLinesFor = (netLines, label) =>
     debitMinor: row.netMinor < 0 ? -row.netMinor : 0,
     creditMinor: row.netMinor > 0 ? row.netMinor : 0,
     description: `${label}: ${row.accountName || row.accountCode || "account"}`,
-    centre: centreOf(row.centre),
+    ...tagsOf(row),
   }));
 
 const sameNetLines = (netLines, postingLines) => {
@@ -518,12 +529,17 @@ const postInvoiceCancellationJournalEntry = async ({ invoice, userId, session })
  * Dr Cash/Bank
  * Cr Customer Advances
  */
+// Where a receipt's money is: cash, the bank, or (a set-off) the customer's own deposit with us.
+const receiptAccountCode = (method) => {
+  const m = String(method || "").toUpperCase();
+  return m === "CASH" ? "1010" : m === "DEPOSIT_SET_OFF" ? "2410" : "1020";
+};
+
 const postPaymentReceivedJournalEntry = async ({ payment, userId, session }) => {
   if (payment.direction !== "RECEIVED") return null;
 
   const accounts = await ensureDefaultAccounts({ businessId: payment.businessId, session });
-  const isCash = String(payment.paymentMethod || "").toUpperCase() === "CASH";
-  const bankAcc = accounts.get(isCash ? "1010" : "1020");
+  const bankAcc = accounts.get(receiptAccountCode(payment.paymentMethod));
   const advAcc = accounts.get("2100"); // Customer Advances
 
   const amountMinor = toMinorUnits(payment.amount);
@@ -660,8 +676,9 @@ const postPaymentAllocationReversalJournalEntry = async ({ reversal, allocation,
  */
 const postPaymentReversalJournalEntry = async ({ reversalPayment, originalPayment, userId, session }) => {
   const accounts = await ensureDefaultAccounts({ businessId: reversalPayment.businessId, session });
-  const isCash = String(originalPayment?.paymentMethod || "").toUpperCase() === "CASH";
-  const bankAcc = accounts.get(isCash ? "1010" : "1020");
+  const bankAcc = accounts.get(originalPayment?.direction === "PAID"
+    ? (String(originalPayment?.paymentMethod || "").toUpperCase() === "CASH" ? "1010" : "1020")
+    : receiptAccountCode(originalPayment?.paymentMethod));
   const advAcc = accounts.get("2100");
 
   const amountMinor = toMinorUnits(reversalPayment.amount);
@@ -731,8 +748,10 @@ const buildExpensePostingLines = async ({ expense, business, session }) => {
   const isGoldhawk = await isGoldhawkBusiness({ business, businessId: expense.businessId, session });
 
   const expAcc = accounts.get(expenseAccountCodeFor(expense.category)) || accounts.get("5010");
-  const isCash = String(expense.paymentMethod || "").toUpperCase() === "CASH";
-  const bankAcc = accounts.get(isCash ? "1010" : "1020");
+  const method = String(expense.paymentMethod || "").toUpperCase();
+  const isCash = method === "CASH";
+  // Paid by credit card: owed to the card (2060) until the card bill is paid from the bank.
+  const bankAcc = accounts.get(isCash ? "1010" : method === "CREDIT_CARD" ? "2060" : "1020");
   const apAcc = accounts.get("2010"); // Accounts Payable
 
   const totalAmountMinor = toMinorUnits(expense.totalAmount);
@@ -876,8 +895,8 @@ const buildExpensePostingLines = async ({ expense, business, session }) => {
     }
   }
 
-  const centre = centreOf(expense.centre);
-  const kept = lines.filter((line) => line.debitMinor > 0 || line.creditMinor > 0).map((line) => ({ ...line, centre }));
+  const tags = tagsOf(expense);
+  const kept = lines.filter((line) => line.debitMinor > 0 || line.creditMinor > 0).map((line) => ({ ...line, ...tags }));
   return kept.length >= 2 ? kept : [];
 };
 
@@ -936,7 +955,7 @@ const buildPurchasePostingLines = async ({ purchase, business, session }) => {
   if (totalMinor <= 0) return [];
   const accounts = await ensureDefaultAccounts({ businessId: purchase.businessId, session });
   const isGoldhawk = await isGoldhawkBusiness({ business, businessId: purchase.businessId, session });
-  const centre = centreOf(purchase.centre);
+  const centre = tagsOf(purchase);
   const label = `Purchase ${purchase.purchaseNumber || purchase._id}`;
 
   let cgstMinor = 0;
@@ -1057,7 +1076,7 @@ const postPurchaseAllocationReversalJournalEntry = async ({ reversal, allocation
 const buildSalesCreditLines = async ({ invoice, business, creditLines, label, session }) => {
   const accounts = await ensureDefaultAccounts({ businessId: invoice.businessId, session });
   const isGoldhawk = await isNoGstGoldhawkInvoice({ invoice, business, session });
-  const centre = centreOf(invoice.centre);
+  const centre = tagsOf(invoice);
 
   let totalMinor = 0;
   let taxMinor = 0;
@@ -1421,6 +1440,7 @@ const resyncInvoiceCredits = async ({ invoice, business, editKey, userId, sessio
 module.exports = {
   paise,
   postingLine,
+  tagsOf,
   assertPeriodOpen,
   isGoldhawkBusiness,
   isNoGstGoldhawkInvoice,

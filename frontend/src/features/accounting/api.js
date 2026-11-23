@@ -138,6 +138,10 @@ export const getDepositsRequest = async (params = {}) => (await api.get("/accoun
 export const createDepositRequest = async (payload, params = {}) => (await api.post("/accounting/deposits", payload, { params })).data.data;
 export const moveDepositRequest = async (id, payload, params = {}) => (await api.post(`/accounting/deposits/${id}/movements`, payload, { params })).data.data;
 export const cancelDepositRequest = async (id, params = {}) => (await api.post(`/accounting/deposits/${id}/cancel`, {}, { params })).data.data;
+// D15a: a deposit received pays the customer's unpaid invoices
+export const getDepositSetOffRequest = async (id, params = {}) => (await api.get(`/accounting/deposits/${id}/set-off`, { params })).data.data;
+export const setOffDepositRequest = async (id, payload, params = {}) => (await api.post(`/accounting/deposits/${id}/set-off`, payload, { params })).data.data;
+export const undoDepositSetOffRequest = async (id, movementId, params = {}) => (await api.post(`/accounting/deposits/${id}/set-off/${movementId}/undo`, {}, { params })).data.data;
 export const getAssetClassesRequest = async () => (await api.get("/accounting/fixed-assets/classes")).data.data;
 export const getAssetsRequest = async (params = {}) => (await api.get("/accounting/fixed-assets", { params })).data.data;
 export const createAssetRequest = async (payload, params = {}) => (await api.post("/accounting/fixed-assets", payload, { params })).data.data;
@@ -163,3 +167,15 @@ export const downloadPayrollRegister = async (id, params = {}) => (await api.get
 export const getStaffAdvancesRequest = async (params = {}) => (await api.get("/accounting/payroll/advances", { params })).data.data;
 export const giveStaffAdvanceRequest = async (payload, params = {}) => (await api.post("/accounting/payroll/advances", payload, { params })).data.data;
 export const cancelStaffAdvanceRequest = async (id, params = {}) => (await api.post(`/accounting/payroll/advances/${id}/cancel`, {}, { params })).data.data;
+
+// Business line x category (or business) report.
+export const getTagMatrixRequest = async (params = {}) => {
+  const response = await api.get("/accounting/reports/tag-matrix", { params });
+  return response.data.data;
+};
+
+// Management report PDF (P&L with shares and pie charts, centres, business lines x categories).
+export const downloadManagementReportPdf = async (params = {}) => {
+  const response = await api.get("/accounting/reports/management.pdf", { params, responseType: "blob" });
+  return response.data;
+};

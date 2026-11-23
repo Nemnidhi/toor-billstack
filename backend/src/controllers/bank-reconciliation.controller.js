@@ -128,7 +128,7 @@ const updateBankAccount = asyncHandler(async (req, res) => {
  */
 const importBankStatement = asyncHandler(async (req, res) => {
   const { businessId } = req.accountingScope;
-  const { bankAccountId, csvText, fileBase64, fileName } = req.body;
+  const { bankAccountId, csvText, fileBase64, fileName, password, autoMatch } = req.body;
 
   if (!bankAccountId) {
     throw new AppError("bankAccountId is required", 400);
@@ -143,6 +143,10 @@ const importBankStatement = asyncHandler(async (req, res) => {
     csvText,
     fileBase64,
     fileName,
+    // the statement PDF's password: used to open it, never stored or logged
+    password: typeof password === "string" ? password.slice(0, 100) : "",
+    autoMatch: autoMatch !== false,
+    userId: req.user._id,
   });
 
   res.status(200).json({ success: true, data: result });

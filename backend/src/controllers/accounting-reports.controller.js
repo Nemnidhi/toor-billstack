@@ -193,7 +193,35 @@ const exportAccountantPack = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: pack });
 });
 
+// Business line x category (or company) report across the companies the person may see.
+const { getTagMatrix } = require("../services/tag-matrix.service");
+const getTagMatrixReport = asyncHandler(async (req, res) => {
+  if (!["owner", "admin", "accountant", "auditor"].includes(req.user.role)) throw new AppError("You do not have permission to access financial reports", 403);
+  res.json({ success: true, data: await getTagMatrix({ user: req.user, query: req.query }) });
+});
+
+// Management report PDF: P&L with shares and pies, centres, business line x category.
+const { buildManagementReportPdf } = require("../services/management-report-pdf.service");
+const downloadManagementReport = asyncHandler(async (req, res) => {
+  const { isConsolidated, businessId, homeBusinessId } = req.accountingScope;
+  const pl = isConsolidated
+    ? await reportsService.getConsolidatedReport({ reportType: "PROFIT_AND_LOSS", homeBusinessId, query: req.query })
+    : await reportsService.getProfitAndLossReport({ businessId, query: req.query });
+  const { entity, centre, ...period } = req.query;
+  const scope = isConsolidated ? "consolidated" : String(businessId);
+  const matrix = (measure) => getTagMatrix({ user: req.user, query: { ...period, entity: scope, rows: "businessLine", columns: "reportCategory", measure } }).catch(() => null);
+  const [matrixIncome, matrixProfit] = await Promise.all([matrix("income"), matrix("profit")]);
+  const companies = (matrixIncome?.companies || []).map((c) => c.name);
+  const pdf = await buildManagementReportPdf({ pl, matrixIncome, matrixProfit, companies: companies.length ? companies : [pl.business?.name || "Business"] });
+  const label = String(pl.period?.periodLabel || "period").replace(/[^A-Za-z0-9-]+/g, "-");
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="management-report-${label}.pdf"`);
+  res.send(pdf);
+});
+
 module.exports = {
+  downloadManagementReport,
+  getTagMatrixReport,
   getProfitAndLoss,
   getCentres,
   getBalanceSheet,

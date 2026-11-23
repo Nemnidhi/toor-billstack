@@ -19,7 +19,7 @@ module.exports = {
   receiveRun: asyncHandler(async (req, res) => {
     const result = await payroll.receiveRun({ credential: req.integrationCredential, payload: req.body });
     await writeAuditLog({ req, businessId: req.integrationCredential.businessId, action: "INTEGRATION_PAYROLL_RECEIVED", entityType: "PAYROLL_RUN", entityId: result.run._id, metadata: { month: result.run.month, version: result.run.version, outcome: result.outcome } }).catch(() => {});
-    res.status(result.outcome === "unchanged" ? 200 : 201).json({ data: { outcome: result.outcome, runId: result.run._id, status: result.run.status, month: result.run.month, version: result.run.version } });
+    res.status(["unchanged", "withdrawn", "nothing_to_withdraw"].includes(result.outcome) ? 200 : 201).json({ data: { outcome: result.outcome, runId: result.run._id, status: result.run.status, month: result.run.month, version: result.run.version } });
   }),
 
   runStatusForCrm: asyncHandler(async (req, res) => {

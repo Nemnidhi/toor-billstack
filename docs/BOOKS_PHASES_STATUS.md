@@ -16,6 +16,122 @@ https://claude.ai/artifact/9DkBUmGZpezbu1JMfFfjVA
 | 5 year end | deposits, fixed assets + depreciation, Schedule III, GSTR-9 tables, MSME 45-day report, Tally export, payroll posting | built, tested (7 DB tests) |
 | payroll (D16) | month's salary sheet finalised in the CRM (attendance, late marks, leave, named deductions, KPI incentive, one-off additions / deductions) sent to BillStack; posted at month end, salaries and PF / ESI / PT / TDS dues paid, staff advances, payslips, salary register | built, tested (4 DB tests here, 5 in the CRM); the CRM side is in the-office-on-rent (not committed) |
 
+## Client answers (handwritten notes, received 23 Nov 2026)
+
+Transcribed from three notebook photos. Readings marked (?) are uncertain; confirm with the client.
+
+| # | Client's answer | What it means here |
+|---|---|---|
+| D1 | Yes, the invoice can be cancelled, and deleted if possible | Cancel stays. Deleting an issued invoice breaks the consecutive GST series (rule 46) and the edit log (rule 3(1)); proposal: delete only drafts never issued |
+| D2 | "Samjh nahi aaya" (not understood) | Re-explain. Their horizontal / vertical answer below is in effect the answer |
+| D5, D7 | We do not cut TDS of anyone; we pay in full (?). Rent: TDS 10%, maintenance 1%; when we receive rent it comes with TDS deducted | Payee side stays off (no supplier TDS). Customers deduct 10% on rent, 1% on maintenance: the receivable side, already built. CA flag: a company paying rent above the 194-I limit must deduct TDS. Reverse charge (D7) is not answered |
+| D11 | Yes, the auditor should get view access. The person (owner) should be able to appoint an accountant read-only, and sometimes give them other features too | Build: auditor (read-only) role, and per-person feature grants |
+| D12 | Yes | Switch to the FY series from 1 Apr 2027 |
+| D13 | Option to create other businesses with separate accounting. Even a personal account: much spending is on credit card, so the founder's accounts should be managed too. Access to be given by Ashish sir manually | Build: any number of businesses with separate books (incl. the founder's personal), access granted by hand |
+| D14 | Aashi ma'am and the accountant | The accountant role can close / reopen periods (today owner / admin only) |
+| D15 | Yes | Build (a) deposit set-off against unpaid invoices, (b) GST on forfeited deposit / notice recovery |
+| D21 | Start everything fresh; old fixed assets not brought in (?) | Nothing to enter |
+| D22 | Yes | Switch the KPI incentive on in the CRM with the example bands |
+| D24 | Aashi ma'am, by the 5th of every month. As per leaves applied in the CRM, 1 paid leave; otherwise done manually | Payroll finalised by Aashi ma'am (needs a non-admin payroll permission in the CRM); "Paid leave days per month" = 1 (a setting) |
+| D25 | Goldhawk staff are paid by Goldhawk only | Build: Goldhawk's people go to Goldhawk's books (second key / company split) |
+| D26 | Yes, enter staff advances | Their data entry |
+
+New requests in the same notes:
+
+1. Upload a screenshot / photo of a bill and the expense fills itself in.
+2. GST reports exactly to the government format, so they go straight to the CA.
+3. Both horizontal and vertical categorisation: businesses (e.g. Workspace, TOOR, ...) against categories C1, C2, C3.
+4. The same invoice number series across categories.
+5. Report PDF export with pie charts and percentages.
+6. Link the bank account to BillStack.
+
+Not answered (mostly the CA's): D3, D4, D6, D8, D9, D10, D17, D18, D19, D20, D23.
+
+### Built from the answers (branch feat/client-answers-23nov, not deployed)
+
+**More businesses (D13).** The group owner adds any number of businesses in Settings > Businesses & access:
+a company (own legal details, GST with a GSTIN or none, own invoice prefix, own ledgers) or personal
+books (e.g. the founder's credit-card spending: never GST, open only to their owner and the people given
+access, never part of company reports). Rename and archive (books kept; bring back any time). Access is
+given by hand per business and role. Goldhawk keeps its place in the CRM link and cannot be archived.
+The consolidated statements stay TOOR + Goldhawk; other businesses are reported on their own.
+Expenses can be paid by credit card: owed to the card (2060 Credit Card Payable) until the card bill is
+paid from the bank (journal entry: Dr 2060, Cr 1020). A bank account can be a credit card; its statement
+reconciles against 2060. Deploy note: the server drops the old unique index
+`businesses.billingParentId_1_billingEntityCode_1` once at start-up and builds
+`billing_entity_code_once_per_group` (still one Goldhawk per group).
+
+**Business line x category (request 3).** Settings > Business lines & categories keeps one list of each for
+the whole group (archive, never rename: posted books keep their names). Invoices (create, edit, detail
+page, reissue), expenses, purchases and recurring profiles carry a business line and a report category;
+journal lines carry them too, so moving a tag moves the books. Accounting > Business lines shows profit,
+income or expenses by business line x category, business x either, for one business or all you can see,
+with totals, shares and CSV. One invoice series is unchanged (request 4: tags never split numbering).
+Old documents show under "Not set" until tagged.
+
+**Auditor and accountant (D11, D14).** Team > invite or change a person to the Auditor role: read-only
+everywhere an accountant or staff member can read. The owner can tick areas where that person may also
+work like an accountant (invoices, receipts, clients, expenses, purchases, banking, journals, TDS, close /
+reopen the books, payroll, year end; constants/auditor-grants.js, middlewares/auditor.js). The accountant
+can now close and reopen the books (Accounting > Lock & edit log), with the owner and admins.
+
+**Management report PDF (request 5).** Accounting > Report PDF: the period's profit and loss with each
+head's share, pies for where the money came from and went, profit by centre, and the business line x
+category split, from the posted books (services/management-report-pdf.service.js).
+
+**Bill photo to expense (request 1).** Expenses > new expense > "Fill from a bill photo": a photo, scan
+or PDF of the bill (JPG / PNG / WEBP / PDF, up to 5 MB; photos are shrunk in the browser) is read by
+Claude (Anthropic API) and fills in the supplier, GSTIN (checked; a known supplier is linked), bill
+number and date, amounts and GST (CGST / SGST or IGST, rate snapped to a standard one, place of supply
+from the supplier's GSTIN), category and description, with warnings for anything that does not add up,
+a future or old date, cess, or a foreign currency. Nothing is saved until the person checks it and
+presses Save; the bill is then attached to the expense as its document. Switched on by setting
+`ANTHROPIC_API_KEY` in the server's environment (the owner sets it; never in the repo); without it the
+button says it is not switched on. Model `claude-opus-5-5` by default (`BILL_READER_MODEL`, effort
+`BILL_READER_EFFORT` = low), with the API's server-side fallback; at most `BILL_READER_DAILY_LIMIT` (200)
+reads a day per business. Cost on Opus 5.5 is about Rs 2-3 a bill; on Haiku 5.5
+(`BILL_READER_MODEL=claude-haiku-5-5`) well under Rs 1 (the client had expected about Rs 1).
+
+**Bank statements: Excel, CSV and PDF, matched automatically (request 6).** Accounting > Bank
+reconciliation > Import statement takes the bank's Excel (.xlsx / .xls, including the HTML ".xls" most
+Indian banks send), CSV or PDF. A text PDF is read from its table (a password-protected one asks for the
+password, which is used once and never stored); a scanned PDF is read by Claude (same key as above). Dates
+in any common form, one amount column with Dr / Cr, balances with Dr / Cr or minus; rows with no
+direction take it from the running balance, and the running balance is checked row by row (breaks
+listed). Repeated identical rows are kept apart, a re-import skips what is already there. After import,
+a row with exactly one sure match (EXACT / HIGH, not wanted by another row) is matched automatically and
+shown as "Matched (auto)"; undoing one keeps it from being auto-matched again. Live bank feeds (account
+aggregator) are not built: they need an AA licence partner and the client's consent per account.
+
+**Deposits: set off and keep with GST (D15).** Accounting > Year end > Deposits, "Pay invoices / keep with
+GST" on a tenant's deposit: (a) pay their unpaid invoices from the deposit (oldest first or by hand; a
+receipt by "Deposit set-off", Dr 2410 / Cr 1100, no money through the bank; undo from the deposit's
+history, never from Payments); (b) keep part of it with GST: a tax invoice for the amount kept (GST
+included; default SAC 997212 at 18%) is raised to the tenant and paid from the deposit, so it shows in
+GSTR-1. A deposit typed with a name only is linked to the customer on its first set-off. The rest stays
+the tenant's, to refund. CA to confirm GST applies to each case.
+
+**Goldhawk's staff to Goldhawk's books (D25).** In the CRM's payroll sheet each person is "Paid by" TOOR
+or Goldhawk (until set, the residential team is Goldhawk's, everyone else TOOR's; the choice is kept for
+the coming months). Each company's people are sent as their own part with that company's key: TOOR's
+with the existing `BILLSTACK_API_KEY`, Goldhawk's with `BILLSTACK_GOLDHAWK_API_KEY` (made in BillStack
+Settings > Integrations with Goldhawk as the active company). Without that key Goldhawk's part is held
+with "key not set" and can be sent again once it is there; TOOR's part is not affected. A correction that
+moves everyone off a company withdraws that company's month here (reversed if posted, refused once
+paid; Accounting > Payroll shows it as withdrawn). Reopening checks both companies' books for payments.
+
+**Who finalises payroll (D24).** CRM Salary > Payroll > "Who finalises payroll" (admin): tick the
+people who may finalise, send and reopen months besides admins (Aashi ma'am). They get the Payroll tab;
+the KPI incentive and this list stay with admins. Last month is due by the 5th: a push on the 3rd, the
+5th and the day after while it is not finalised, to admins and the people ticked (days can be changed;
+push needs the CRM's VAPID keys). Paid leave: "Paid leave days per month" is already a CRM setting
+(Salary > Deduction rules), default 1, per person if needed.
+
+Deploy notes for this branch: `npm install` in backend (new: `@anthropic-ai/sdk`, `pdfjs-dist`); the
+businesses index change above runs itself at start-up; nginx `client_max_body_size` at least 8m (bill
+and statement uploads). CRM (branch feat/payroll, worktree changes): set `BILLSTACK_GOLDHAWK_API_KEY`
+in its environment; no migration (old runs count as TOOR's).
+
 ## Pending decisions (owner / client / CA) - nothing below blocks the build
 
 | # | Decision | Built default until decided |
@@ -29,16 +145,16 @@ https://claude.ai/artifact/9DkBUmGZpezbu1JMfFfjVA
 | D8 | Monthly or quarterly (QRMP) GST filing for TOOR. GSTR-3B is built month by month | monthly |
 | D9 | GSTR-1 portal JSON: the CA to load one month into the GST offline tool before it is used for upload (schema version GST3.2.1, HSN split B2B / B2C) | download offered next to the Excel |
 | D10 | GSTR-2B file: send one real JSON or Excel download (any month) to test the reader against | built from the published layout |
-| D11 | Auditor access to the edit log: a separate read-only "auditor" login, or the accountant role | owner, admin and accountant can view and export; no auditor role yet |
+| D11 | Auditor access (answered 23 Nov: view access, plus features given per person) | built: Auditor role, read-only, with per-person grants |
 | D12 | Switch the invoice series to the financial-year format (e.g. TOOR/{FY}/{0001}) and from when (best from 1 Apr 2027, a new FY). Old numbers stay as they are | not switched: format unchanged; the {FY} token and 16-character check are ready in Settings > Invoice & Payment |
 | D13 | Goldhawk GST: limit Rs 20 lakh (services, MP), and the date its registration takes effect once it registers | watch with alerts at 75 / 90 / 100%; Goldhawk stays without GST until "GST registration effective from" is set in its settings |
-| D14 | Period lock: who closes the books and when (e.g. after each GSTR-3B is filed, and after the audit for the year) | nothing closed; owner / admin can close or reopen in Accounting > Lock & edit log |
-| D15 | Deposits: (a) may a tenant's deposit be set off against unpaid invoices (today: refund or forfeit only; set-off is a refund plus a receipt); (b) GST on forfeited deposits / notice-period recovery (18% as a supply?) | (a) not built; (b) forfeit posts to Other income with no GST |
+| D14 | Period lock: who closes the books (answered: Aashi ma'am and the accountant) and when (e.g. after each GSTR-3B is filed, and after the audit for the year) | nothing closed; owner / admin / accountant can close or reopen in Accounting > Lock & edit log |
+| D15 | Deposits (answered yes): CA to confirm GST at 18% on each kind of amount kept (notice-period recovery, damages) | built: (a) set-off against invoices, (b) keep with GST as a tax invoice; plain forfeit (no GST) is still there |
 | D16 | Payroll: salaries come from the CRM's finalised month into the books | built (see "Payroll as built"); stop entering salaries as Expenses from the first month sent, or they are counted twice (the run shows a warning) |
 | D22 | KPI incentive rule: which score (target score, or the overall KPI score - which already includes attendance and punctuality, so late marks would count twice), the bands and the amounts (% of salary or fixed). Commission on deal value is not in the CRM (its revenue figure is closed deals x Rs 50,000, a placeholder) | built switched off in the CRM; example bands 95+ 10%, 90+ 7.5%, 85+ 5%, 80+ 2.5% on the target score. Owner 21 Nov: salary, KPI score and incentive are the admin's call - all three are editable per person on the payroll sheet (blank = the CRM's figure; a typed incentive replaces the rule's amount, a typed KPI score drives the band). The rule stays only as a suggestion |
 | D23 | Statutory payroll (owner 21 Nov: not sure yet whether PF / ESI / TDS apply): PF, ESI, professional tax and TDS on salary are optional boxes per person on the CRM payroll sheet ("Deductions & more"), blank = none, typed by the admin; they can also be named deductions in Salary > Deduction rules (the sheet warns if both are set for one person). Not worked out by law (PF 12% of basic up to the 15,000 ceiling, ESI 0.75% under 21,000 gross, MP professional tax slabs, s.192 TDS projection). Employer's PF (12%) and ESI (3.25%) share is not added. CA to say what is needed | optional per-person amounts typed by the admin; employer share not posted |
-| D24 | Who finalises payroll (CRM admin only today) and by which day; leavers' final settlement (people switched off in the CRM after the month began are included with a warning; no notice-pay / leave encashment / gratuity) | admin only; final settlement by one-off additions / deductions |
-| D25 | Goldhawk staff: the CRM sends to one BillStack company (the integration key's). Do Goldhawk's people get paid by Goldhawk (a second key and department split) or all by TOOR | all to the key's company (TOOR) |
+| D24 | Leavers' final settlement (people switched off in the CRM after the month began are included with a warning; no notice-pay / leave encashment / gratuity). Answered: Aashi ma'am finalises by the 5th; 1 paid leave | built: named finalisers + reminders; final settlement by one-off additions / deductions |
+| D25 | Goldhawk staff (answered: paid by Goldhawk only). Confirm the default: the residential team is Goldhawk's until someone is set otherwise | built: "Paid by" per person, Goldhawk's part with Goldhawk's key |
 | D26 | Staff advances paid before this: enter them in Payroll > Staff advances with their old date, or as an opening balance on 1160, so recoveries do not leave a minus balance | none entered |
 | D17 | Fixed asset lives and tax rates (CA to confirm): furniture 10 yrs / 10%, fit-out over the lease (max 10 yrs) / 10%, electrical 10 / 10%, office equipment 5 / 15%, computers 3 / 40%, servers 6 / 40%, software 3 / 40%, vehicles 8 / 15%, plant 15 / 15%; residual 5% (fit-out 0) | as listed; each asset's life, residual and tax rate can be changed when added |
 | D18 | Schedule III: the companies' legal form (private limited assumed, Division I), and whether deposits received / given are non-current (assumed) or partly current; tax expense and deferred tax are left to the CA | as stated |
@@ -49,7 +165,10 @@ https://claude.ai/artifact/9DkBUmGZpezbu1JMfFfjVA
 
 ## Verification checklist (before deploy)
 
-- Payroll: in BillStack Settings > Integrations, the CRM's existing key is used (no new key). In the CRM, Salary > Payroll: pick last month, check the sheet against attendance, set the KPI incentive (D22) or leave it off, Finalise. In BillStack Accounting > Payroll (TOOR): map each deduction (PF, PT, advance...), Post, pay, pay dues. Cancel any hand-entered salary expense for the same month.
+- Payroll: TOOR's people use the CRM's existing key. For Goldhawk's people, switch BillStack to Goldhawk, Settings > Integrations > new key, and set it on the CRM server as BILLSTACK_GOLDHAWK_API_KEY (at a hidden prompt). In the CRM, Salary > Payroll: check each person's "Paid by", pick last month, check the sheet against attendance, set the KPI incentive (D22) or leave it off, Finalise. In BillStack Accounting > Payroll (TOOR, then Goldhawk): map each deduction (PF, PT, advance...), Post, pay, pay dues. Cancel any hand-entered salary expense for the same month. Tick Aashi ma'am under "Who finalises payroll".
+- Bill photo and scanned statements: set ANTHROPIC_API_KEY on the BillStack server (owner, at a hidden prompt), restart, read one real bill and check every field before Save.
+- Bank: import one real statement of each bank in Excel and in PDF; check the balance check says all rows agree and the automatic matches.
+- Deposits: on a test tenant, pay one invoice from the deposit and undo it; check Accounting > Bank & Cash Book shows no bank movement.
 
 - Full server suite (`npm test`), every DB test with TEST_MONGO_URI, client build + tests.
 - After deploy: Accounting > Historical Backfill (dry run, then execute).

@@ -107,6 +107,10 @@ const bankStatementTransactionSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    // Matched on import without anyone choosing (one entry, same amount, reference or within 3 days).
+    matchedAutomatically: { type: Boolean, default: false },
+    // Someone undid an automatic match: never match this row automatically again.
+    autoMatchRejected: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

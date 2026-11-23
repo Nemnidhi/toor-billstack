@@ -3,6 +3,7 @@ import { ArrowLeft, BellRing, CheckCircle2, CircleAlert, Download, FileCheck2, L
 import { useNavigate, useParams } from "react-router-dom";
 import { EmptyState, ErrorState, LoadingState } from "../../../components/ui/PageState";
 import CentreInput, { forgetCentres } from "../../../components/ui/CentreInput";
+import ReportTagFields from "../../../components/ui/ReportTagFields";
 import { authStore } from "../../../store/authStore";
 import { uiStore } from "../../../store/uiStore";
 import { isRealEstateSelfHostedWorkspace } from "../../workspace/workspaceVisibility";
@@ -490,26 +491,28 @@ const PaymentAllocations = ({ rows, canReverse, reversing, onReverse, onReceipt 
   return <section className="rounded-2xl border p-5" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}><h3 className="text-lg font-semibold">Payment history</h3><p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>Every instalment remains recorded with its date, mode and reference.</p>{rows.length ? <div className="mt-4 space-y-3">{rows.map((row) => <div key={row.allocationId || row._id} className="rounded-xl border p-3 text-sm" style={{ borderColor: "var(--panel-border)" }}><div className="flex items-start justify-between gap-3"><div><p className={`font-semibold ${row.reversal ? "line-through opacity-60" : ""}`}>{money(row.allocatedAmount)}</p><p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>{date(row.payment?.paymentDate || row.createdAt)} · {row.payment?.paymentMethod || "Method not captured"}</p></div><span className={`rounded-full px-2 py-1 text-xs ${row.reversal ? "bg-rose-500/10 text-rose-700" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"}`}>{row.reversal ? "Reversed" : "Received"}</span></div><dl className="mt-3 grid gap-2 text-xs"><AmountRow label="Reference" value={row.payment?.referenceNumber || "—"} />{row.reversal ? <><AmountRow label="Reversed on" value={date(row.reversal.createdAt)} /><AmountRow label="Reason" value={row.reversal.reason} /></> : null}</dl><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => onReceipt(row)} className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium" style={{ borderColor: "var(--panel-border)" }}><Download size={13} /> Receipt</button>{canReverse && !row.reversal ? <button type="button" disabled={reversing === row.allocationId} onClick={() => onReverse(row)} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/30 px-2.5 py-1.5 text-xs font-medium text-rose-600 disabled:opacity-50">{reversing === row.allocationId ? <LoaderCircle size={13} className="animate-spin" /> : <RotateCcw size={13} />} Reverse</button> : null}</div></div>)}</div> : <EmptyState title="No payments recorded" description="Use Record payment to add the first receipt against this invoice." />}</section>;
 };
 
-// Which property / centre this invoice's income belongs to. Works on paid invoices too;
-// changing it moves the income in the books to the new centre.
+// Which property / centre, business line and category this invoice's income belongs to. Works on
+// paid invoices too; changing them moves the income in the books.
+const tagsOfInvoice = (invoice) => ({ centre: invoice.centre || "", businessLine: invoice.businessLine || "", reportCategory: invoice.reportCategory || "" });
 const InvoiceCentre = ({ invoice, onSaved }) => {
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(invoice.centre || "");
+  const [value, setValue] = useState(tagsOfInvoice(invoice));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => { setValue(invoice.centre || ""); }, [invoice.centre]);
+  useEffect(() => { setValue(tagsOfInvoice(invoice)); }, [invoice.centre, invoice.businessLine, invoice.reportCategory]);
+  const shown = [invoice.centre, invoice.businessLine, invoice.reportCategory].filter(Boolean);
   const save = async (event) => {
     event.preventDefault();
     setSaving(true);
     setError("");
     try {
-      await updateInvoiceRequest(invoice._id, { centre: value.trim() });
+      await updateInvoiceRequest(invoice._id, { centre: value.centre.trim(), businessLine: value.businessLine, reportCategory: value.reportCategory });
       forgetCentres();
-      uiStore.getState().pushToast({ tone: "success", message: value.trim() ? `Booked to ${value.trim()}.` : "Centre removed." });
+      uiStore.getState().pushToast({ tone: "success", message: "Saved; the books follow." });
       setEditing(false);
       await onSaved();
     } catch (err) {
-      setError(err.response?.data?.message || "Unable to save the centre.");
+      setError(err.response?.data?.message || "Unable to save.");
     } finally {
       setSaving(false);
     }
@@ -518,17 +521,22 @@ const InvoiceCentre = ({ invoice, onSaved }) => {
     <section className="rounded-2xl border p-5 sm:p-6" style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Centre / property</p>
-          {!editing ? <p className="mt-1 text-sm font-semibold">{invoice.centre || "Not assigned"}</p> : null}
+          <p className="text-xs font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Centre, business line & category</p>
+          {!editing ? <p className="mt-1 text-sm font-semibold">{shown.length ? shown.join(" · ") : "Not assigned"}</p> : null}
         </div>
-        {!editing ? <button type="button" onClick={() => setEditing(true)} className="rounded-lg border px-3 py-1.5 text-xs font-medium" style={{ borderColor: "var(--panel-border)" }}>{invoice.centre ? "Change" : "Assign centre"}</button> : null}
+        {!editing ? <button type="button" onClick={() => setEditing(true)} className="rounded-lg border px-3 py-1.5 text-xs font-medium" style={{ borderColor: "var(--panel-border)" }}>{shown.length ? "Change" : "Assign"}</button> : null}
       </div>
       {editing ? (
-        <form onSubmit={save} className="mt-3 flex flex-wrap items-center gap-2">
-          <div className="min-w-[220px] flex-1"><CentreInput value={value} onChange={setValue} /></div>
-          <button disabled={saving} className="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Saving..." : "Save"}</button>
-          <button type="button" disabled={saving} onClick={() => { setEditing(false); setValue(invoice.centre || ""); setError(""); }} className="rounded-xl border px-4 py-2.5 text-sm" style={{ borderColor: "var(--panel-border)" }}>Cancel</button>
-          {error ? <p role="alert" className="w-full text-sm text-rose-600">{error}</p> : null}
+        <form onSubmit={save} className="mt-3 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label><span className="mb-2 block text-sm font-medium">Centre / property</span><CentreInput value={value.centre} onChange={(v) => setValue((c) => ({ ...c, centre: v }))} /></label>
+            <ReportTagFields value={value} onChange={(field, v) => setValue((c) => ({ ...c, [field]: v }))} />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button disabled={saving} className="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Saving..." : "Save"}</button>
+            <button type="button" disabled={saving} onClick={() => { setEditing(false); setValue(tagsOfInvoice(invoice)); setError(""); }} className="rounded-xl border px-4 py-2.5 text-sm" style={{ borderColor: "var(--panel-border)" }}>Cancel</button>
+          </div>
+          {error ? <p role="alert" className="text-sm text-rose-600">{error}</p> : null}
         </form>
       ) : null}
     </section>

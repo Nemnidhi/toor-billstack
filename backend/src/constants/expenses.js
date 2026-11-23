@@ -41,7 +41,8 @@ const EXPENSE_CATEGORY_ACCOUNTS = {
 const expenseAccountCodeFor = (category) => EXPENSE_CATEGORY_ACCOUNTS[category] || "5010";
 
 const EXPENSE_PAYMENT_STATUSES = ["UNPAID", "PARTIAL", "PAID"];
-const EXPENSE_PAYMENT_METHODS = ["", "CASH", "BANK_TRANSFER", "UPI", "CARD", "CHEQUE", "OTHER"];
+// CARD: a debit card (paid from the bank). CREDIT_CARD: owed to the card until its bill is paid.
+const EXPENSE_PAYMENT_METHODS = ["", "CASH", "BANK_TRANSFER", "UPI", "CARD", "CREDIT_CARD", "CHEQUE", "OTHER"];
 const EXPENSE_STATUSES = ["ACTIVE", "CANCELLED"];
 // REVERSE_CHARGE: the supplier charges no GST (e.g. rent from an unregistered landlord to a
 // registered business); we pay the GST ourselves and may take it back as input credit.

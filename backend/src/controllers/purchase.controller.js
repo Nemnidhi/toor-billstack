@@ -12,6 +12,7 @@ const { buildGstSnapshot, validateGstin, validateStateCode } = require("../utils
 const { applyFinancialRead, applyFinancialReads } = require("../services/financial-read.service");
 const { createSupplierLedgerEntryOnce } = require("../services/ledger.service");
 const { postPurchaseJournalEntry } = require("../services/accounting.service");
+const { cleanTags } = require("../services/reporting-tags.service");
 const {
   buildPaginatedResponse,
   buildPagination,
@@ -165,6 +166,7 @@ const createPurchase = asyncHandler(async (req, res) => {
             paymentStatus: "unpaid",
             purchaseDate: req.body.purchaseDate ? new Date(req.body.purchaseDate) : new Date(),
             centre: String(req.body.centre || "").trim().slice(0, 80),
+            ...(await cleanTags(req.tenant.businessId, req.body)),
             createdBy: req.user._id,
           },
         ],

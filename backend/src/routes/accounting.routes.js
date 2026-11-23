@@ -8,6 +8,8 @@ const {
 } = require("../controllers/accounting.controller");
 const {
   getProfitAndLoss,
+  getTagMatrixReport,
+  downloadManagementReport,
   getCentres,
   getBalanceSheet,
   getBankBook,
@@ -50,6 +52,8 @@ router.post("/journal-entries/manual", permit("owner", "admin", "accountant"), p
 // Accountant Financial Reports (Entity-scoped, Consolidated, Indian FY & Export)
 router.get("/reports/profit-loss", authorizeAccountingReport, getProfitAndLoss);
 router.get("/centres", getCentres);
+router.get("/reports/tag-matrix", getTagMatrixReport);
+router.get("/reports/management.pdf", authorizeAccountingReport, downloadManagementReport);
 router.get("/reports/balance-sheet", authorizeAccountingReport, getBalanceSheet);
 router.get("/reports/bank-book", authorizeAccountingReport, getBankBook);
 router.get("/reports/cash-book", authorizeAccountingReport, getCashBook);
@@ -93,6 +97,10 @@ router.get("/deposits", authorizeAccountingReport, yearEnd.listDeposits);
 router.post("/deposits", authorizeAccountingReport, yearEnd.createDeposit);
 router.post("/deposits/:id/movements", authorizeAccountingReport, yearEnd.moveDeposit);
 router.post("/deposits/:id/cancel", authorizeAccountingReport, yearEnd.cancelDeposit);
+// D15a: a deposit received pays the customer's unpaid invoices (and can be undone)
+router.get("/deposits/:id/set-off", authorizeAccountingReport, yearEnd.setOffCandidates);
+router.post("/deposits/:id/set-off", authorizeAccountingReport, yearEnd.setOffDeposit);
+router.post("/deposits/:id/set-off/:movementId/undo", authorizeAccountingReport, yearEnd.undoSetOff);
 router.get("/fixed-assets/classes", yearEnd.assetClasses);
 router.get("/fixed-assets", authorizeAccountingReport, yearEnd.listAssets);
 router.post("/fixed-assets", authorizeAccountingReport, yearEnd.createAsset);

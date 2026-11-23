@@ -132,6 +132,17 @@ const businessSchema = new mongoose.Schema(
   {
     billingParentId: { type: mongoose.Schema.Types.ObjectId, ref: "Business", default: null, immutable: true },
     billingEntityCode: { type: String, enum: ["", "TOOR", "GOLDHAWK"], default: "", immutable: true },
+    // COMPANY: a business with its own books (TOOR, Goldhawk, any other the owner adds).
+    // PERSONAL: a person's own books (e.g. the founder's credit-card spending). Only the people
+    // given access open it - not every admin of the group - and it never joins company reports.
+    entityKind: { type: String, enum: ["COMPANY", "PERSONAL"], default: "COMPANY" },
+    // Group-wide lists for the two report tags on every invoice, expense and purchase: business
+    // line (vertical, e.g. Workspace / TOOR) and category (horizontal, e.g. C1 / C2). Kept on the
+    // primary company and shared by every company in the group, so reports line up across them.
+    reportingTags: {
+      businessLines: { type: [{ name: { type: String, trim: true, maxlength: 60 }, archived: { type: Boolean, default: false }, _id: false }], default: [] },
+      categories: { type: [{ name: { type: String, trim: true, maxlength: 60 }, archived: { type: Boolean, default: false }, _id: false }], default: [] },
+    },
     name: {
       type: String,
       required: true,
@@ -280,7 +291,13 @@ const businessSchema = new mongoose.Schema(
   }
 );
 
-businessSchema.index({ billingParentId: 1, billingEntityCode: 1 }, { unique: true, partialFilterExpression: { billingParentId: { $type: "objectId" } } });
+// One Goldhawk (one of each code) per group. Businesses the owner adds have no code, and there can
+// be any number of them, so only coded children are unique. Replaces the index
+// billingParentId_1_billingEntityCode_1 (all children), dropped once by ensureBusinessIndexes.
+businessSchema.index(
+  { billingParentId: 1, billingEntityCode: 1 },
+  { name: "billing_entity_code_once_per_group", unique: true, partialFilterExpression: { billingParentId: { $type: "objectId" }, billingEntityCode: { $gt: "" } } },
+);
 businessSchema.pre("save", async function () {
   if (this.billingEntityCode === "GOLDHAWK" && !this.gstRegisteredFrom) {
     this.gstConfiguration = { enabled: false, gstin: "", stateCode: "", state: "" };

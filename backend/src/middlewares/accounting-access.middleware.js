@@ -4,6 +4,8 @@ const AppError = require("../utils/appError");
 const { listEntities, resolveEntityUser, canonicalGroupEntities, findGroupEntity } = require("../services/billing-entity.service");
 
 const ALLOWED_ACCOUNTING_ROLES = ["owner", "admin", "accountant"];
+// An auditor reads like an accountant (and acts as one in granted areas; the gate stops the rest).
+const accountingRole = (req, role) => require("./auditor").effectiveRole(req, role);
 
 /**
  * Middleware for Accounting Reports authorization & entity routing.
@@ -18,7 +20,7 @@ const authorizeAccountingReport = async (req, _res, next) => {
       throw new AppError("Authentication required", 401);
     }
 
-    if (!ALLOWED_ACCOUNTING_ROLES.includes(req.user.role)) {
+    if (!ALLOWED_ACCOUNTING_ROLES.includes(accountingRole(req, req.user.role))) {
       throw new AppError("You do not have permission to access financial reports", 403);
     }
 
@@ -34,7 +36,9 @@ const authorizeAccountingReport = async (req, _res, next) => {
 
     if (isConsolidatedRequest) {
       // Find the group's entities
-      const groupEntities = await canonicalGroupEntities(rootBusinessId);
+      // The consolidated statements combine TOOR and Goldhawk only (other businesses and personal
+      // books are reported on their own), so only those two need access.
+      const groupEntities = (await canonicalGroupEntities(rootBusinessId)).filter((g) => String(g._id) === String(rootBusinessId) || g.billingEntityCode === "GOLDHAWK");
 
       // User must have access to all entities in the group
       const accessibleIds = new Set(userEntities.map((e) => e.id.toString()));
@@ -47,7 +51,7 @@ const authorizeAccountingReport = async (req, _res, next) => {
       // Check role in each entity
       for (const entity of groupEntities) {
         const scoped = await resolveEntityUser(req.user, entity._id);
-        if (!ALLOWED_ACCOUNTING_ROLES.includes(scoped.role)) {
+        if (!ALLOWED_ACCOUNTING_ROLES.includes(accountingRole(req, scoped.role))) {
           throw new AppError(`Insufficient permissions for entity: ${entity.name}`, 403);
         }
       }
@@ -84,7 +88,7 @@ const authorizeAccountingReport = async (req, _res, next) => {
     }
 
     const scopedUser = await resolveEntityUser(req.user, targetBusinessId);
-    if (!ALLOWED_ACCOUNTING_ROLES.includes(scopedUser.role)) {
+    if (!ALLOWED_ACCOUNTING_ROLES.includes(accountingRole(req, scopedUser.role))) {
       throw new AppError("You do not have permission to access financial reports for this entity", 403);
     }
 

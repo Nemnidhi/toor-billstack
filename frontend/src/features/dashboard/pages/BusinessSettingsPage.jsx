@@ -1,6 +1,7 @@
 import PageHeader from "../../../components/ui/PageHeader";
 import { useEffect, useMemo, useRef, useState } from "react";
 import BillingEntitySettings from "../../workspace/BillingEntitySettings";
+import ReportingTagsSettings from "../../workspace/ReportingTagsSettings";
 import gstStates from "../../../../../shared/indian-gst-states.json";
 import {
   communicationSummaryRequest,
@@ -357,6 +358,7 @@ const BusinessSettingsPage = () => {
     <div className="space-y-6">
       <PageHeader kicker="Admin" title="Settings" description="Manage your billing companies, GST, invoices and payment details." />
       <BillingEntitySettings />
+      <ReportingTagsSettings />
       <nav aria-label="Settings sections" className="segmented no-scrollbar">
         {["Business Profile", "GST & Tax", "Invoice & Payment", "Branding", "Communications", ...(visibility.inventory ? ["Inventory"] : [])].map(label => <button key={label} type="button" onClick={() => { setSection(label); setSaveError(""); setFieldErrors({}); setSaved(false); }} aria-pressed={section === label} className={`segmented-item ${section === label ? "is-active" : ""}`}>{label}</button>)}
       </nav>

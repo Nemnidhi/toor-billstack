@@ -44,6 +44,8 @@ const authMiddleware = asyncHandler(async (req, _res, next) => {
   });
   req.business = business;
   require("../utils/request-context").setUser(req.user);
+  // Auditors are read-only outside the areas granted to them (client D11).
+  require("./auditor").auditorGate(req);
   next();
 });
 

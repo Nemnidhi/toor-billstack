@@ -24,6 +24,7 @@ const { createCustomerLedgerEntryOnce } = require("./ledger.service");
 const accountingService = require("./accounting.service");
 const { dispatchInvoiceIssuedAutomation, scheduleWorkflowMessage } = require("./communication.service");
 const { cleanText, resolveOrCreateCatalogService } = require("./service-catalog.service");
+const { cleanTags } = require("./reporting-tags.service");
 
 const ORDER_TRANSITIONS = {
   DRAFT: ["CONFIRMED", "CANCELLED"],
@@ -251,6 +252,8 @@ const createInvoiceFromWorkflow = async ({ business, customer, lineItems, source
     gstBreakup: gstSnapshot ? { cgst: gstSnapshot.cgst, sgst: gstSnapshot.sgst, utgst: gstSnapshot.utgst, igst: gstSnapshot.igst, taxableValue: gstSnapshot.taxableValue, hsnSacSummary: gstSnapshot.hsnSacSummary } : undefined,
     status: "issued",
     centre: String(source.centre || "").trim().slice(0, 80),
+    businessLine: String(source.businessLine || "").trim().slice(0, 60),
+    reportCategory: String(source.reportCategory || "").trim().slice(0, 60),
     createdBy: userId,
   };
   if (source.type === "ORDER") payload.sourceOrderId = source.id;
@@ -621,6 +624,7 @@ const createRecurringProfile = async ({ businessId, userId, payload }) => {
         renewalReminderDays: Number(payload.renewalReminderDays || 30),
         autoRenew: Boolean(payload.autoRenew),
         centre: String(payload.centre || "").trim().slice(0, 80),
+        ...(await cleanTags(businessId, payload)),
         createdBy: userId,
       }], { session });
       if (profile.renewalDate && customer.email) {
@@ -669,14 +673,15 @@ const setRecurringStatus = async ({ businessId, userId, id, status, req }) => {
   return profile;
 };
 
-// The property / centre future invoices from this profile are booked to.
-const setRecurringCentre = async ({ businessId, userId, id, centre, req }) => {
+// The property / centre, business line and category future invoices from this profile are booked to.
+const setRecurringCentre = async ({ businessId, userId, id, centre, tags = {}, req }) => {
   const profile = await RecurringBillingProfile.findOne({ _id: id, businessId });
   if (!profile) throw new AppError("Recurring profile not found", 404);
-  profile.centre = String(centre || "").trim().slice(0, 80);
+  if (centre !== undefined) profile.centre = String(centre || "").trim().slice(0, 80);
+  Object.assign(profile, await cleanTags(businessId, tags, profile));
   profile.updatedBy = userId;
   await profile.save();
-  await writeAuditLog({ req, businessId, action: "RECURRING_CENTRE_SET", entityType: "RecurringBillingProfile", entityId: profile._id, metadata: { centre: profile.centre } });
+  await writeAuditLog({ req, businessId, action: "RECURRING_CENTRE_SET", entityType: "RecurringBillingProfile", entityId: profile._id, metadata: { centre: profile.centre, businessLine: profile.businessLine, reportCategory: profile.reportCategory } });
   return profile;
 };
 
@@ -721,7 +726,7 @@ const generateRecurringInvoice = async ({ businessId, userId, id, runDate = new 
         business,
         customer,
         lineItems: profile.lineItems,
-        source: { type: "RECURRING", id: profile._id, occurrenceKey: key, paymentTermsDays: profile.paymentTermsDays, placeOfSupplyCode: profile.placeOfSupplyCode, centre: profile.centre || "" },
+        source: { type: "RECURRING", id: profile._id, occurrenceKey: key, paymentTermsDays: profile.paymentTermsDays, placeOfSupplyCode: profile.placeOfSupplyCode, centre: profile.centre || "", businessLine: profile.businessLine || "", reportCategory: profile.reportCategory || "" },
         userId,
         session,
       });

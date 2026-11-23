@@ -57,6 +57,9 @@ const expenseSchema = new mongoose.Schema(
     selfInvoiceNumber: { type: String, trim: true, default: "" },
     // Property / centre this belongs to (profit by location). Free text, blank = not assigned.
     centre: { type: String, trim: true, maxlength: 80, default: "" },
+    // Report tags (see Business.reportingTags): business line (vertical) and category (horizontal).
+    businessLine: { type: String, trim: true, maxlength: 60, default: "" },
+    reportCategory: { type: String, trim: true, maxlength: 60, default: "" },
     receipt: { type: expenseAttachmentSchema, default: () => ({}) },
     attachments: { type: [require("./documentAttachment.schema")], default: [] },
     // when the bill was fully paid (for the MSME 45-day report)

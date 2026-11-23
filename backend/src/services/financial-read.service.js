@@ -39,7 +39,7 @@ const hasMigratedFinancialState = async ({ businessId, sourceType, sourceDocumen
   return Boolean(await query);
 };
 const hasFinancialChanges = ({ sourceType, body = {} }) => {
-  const safe = new Set(["notes", "termsAndConditions", "centre"]);
+  const safe = new Set(["notes", "termsAndConditions", "centre", "businessLine", "reportCategory"]);
   return Object.keys(body).some((key) => !safe.has(key));
 };
 const hasLegacyPaymentWrite = ({ sourceType, body = {} }) => Object.keys(body).some((key) => (sourceType === "INVOICE" && ["amountPaid", "paymentStatus"].includes(key)) || (sourceType === "PURCHASE" && ["paidAmount", "paymentStatus"].includes(key)));

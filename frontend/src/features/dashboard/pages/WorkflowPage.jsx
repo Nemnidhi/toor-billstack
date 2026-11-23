@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import CentreInput, { forgetCentres } from "../../../components/ui/CentreInput";
+import ReportTagFields from "../../../components/ui/ReportTagFields";
 import {
   CalendarClock,
   CheckCircle2,
@@ -116,6 +117,36 @@ const EmptyState = ({ title, description, icon: Icon = FileText }) => (
     <p className="mt-1 max-w-sm text-sm text-slate-500">{description}</p>
   </div>
 );
+
+// A recurring profile's centre, business line and category (for the invoices it makes from now on).
+const RecurringTags = ({ item, onSave }) => {
+  const [edit, setEdit] = useState(null);
+  const shown = [item.centre, item.businessLine, item.reportCategory].filter(Boolean);
+  if (!edit) {
+    return (
+      <>
+        Booked to: <span className="font-semibold text-slate-700">{shown.length ? shown.join(" · ") : "not assigned"}</span>{" "}
+        {item.status !== "CANCELLED" ? (
+          <button type="button" className="ml-1 text-brand-600 underline-offset-2 hover:underline" onClick={() => setEdit({ centre: item.centre || "", businessLine: item.businessLine || "", reportCategory: item.reportCategory || "" })}>
+            {shown.length ? "Change" : "Set"}
+          </button>
+        ) : null}
+      </>
+    );
+  }
+  return (
+    <span className="mt-2 block space-y-2">
+      <span className="grid gap-2 sm:grid-cols-3">
+        <label><span className="mb-1 block text-xs font-semibold text-slate-600">Centre / property</span><CentreInput className="input" value={edit.centre} onChange={(v) => setEdit((c) => ({ ...c, centre: v }))} /></label>
+        <ReportTagFields value={edit} onChange={(field, v) => setEdit((c) => ({ ...c, [field]: v }))} className="input" labelClassName="mb-1 block text-xs font-semibold text-slate-600" />
+      </span>
+      <span className="flex gap-2">
+        <button type="button" className="btn-primary" onClick={async () => { if (await onSave(edit)) setEdit(null); }}>Save</button>
+        <button type="button" className="btn-secondary" onClick={() => setEdit(null)}>Cancel</button>
+      </span>
+    </span>
+  );
+};
 
 const Field = ({ label, hint, error, children, className = "" }) => (
   <label className={`form-field ${className}`}>
@@ -303,6 +334,8 @@ const WorkflowPage = () => {
           frequency: form.frequency || "MONTHLY",
           startDate: form.startDate || new Date().toISOString().slice(0, 10),
           centre: String(form.centre || "").trim(),
+          businessLine: form.businessLine || "",
+          reportCategory: form.reportCategory || "",
           lineItems: [{
             productId,
             productName: String(form.productName || "").trim(),
@@ -487,24 +520,16 @@ const WorkflowPage = () => {
               <p className="truncate text-base font-bold text-slate-950">{item.name}</p>
               <p className="mt-0.5 text-sm text-slate-500">{item.customerId?.name || "Client"}{item.lineItems?.[0]?.productName ? ` · ${item.lineItems[0].productName}` : ""}</p>
               <p className="mt-0.5 text-xs text-slate-500">
-                Centre: <span className="font-semibold text-slate-700">{item.centre || "not assigned"}</span>{" "}
-                {item.status !== "CANCELLED" ? (
-                  <button
-                    type="button"
-                    className="ml-1 text-brand-600 underline-offset-2 hover:underline"
-                    onClick={() => {
-                      const next = window.prompt("Centre / property for future invoices from this profile (leave blank for none)", item.centre || "");
-                      if (next === null) return;
-                      action(async () => {
-                        const saved = await setRecurringCentreRequest(item._id, next.trim());
-                        forgetCentres();
-                        setData((current) => current.map((row) => (row._id === item._id ? { ...row, centre: saved.centre } : row)));
-                      }, "Centre saved.");
-                    }}
-                  >
-                    {item.centre ? "Change" : "Set"}
-                  </button>
-                ) : null}
+                <RecurringTags
+                  item={item}
+                  onSave={(tags) =>
+                    action(async () => {
+                      const saved = await setRecurringCentreRequest(item._id, tags.centre.trim(), { businessLine: tags.businessLine, reportCategory: tags.reportCategory });
+                      forgetCentres();
+                      setData((current) => current.map((row) => (row._id === item._id ? { ...row, centre: saved.centre, businessLine: saved.businessLine, reportCategory: saved.reportCategory } : row)));
+                    }, "Saved for future invoices.")
+                  }
+                />
               </p>
             </div>
             <Badge>{item.status}</Badge>
@@ -766,6 +791,9 @@ const WorkflowPage = () => {
               <Field label="Centre / property" hint="Optional. Every invoice from this profile is booked to this centre (profit by location).">
                 <CentreInput className="input" value={form.centre || ""} onChange={(value) => updateField("centre", value)} />
               </Field>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <ReportTagFields value={form} onChange={(field, value) => updateField(field, value)} className="input" labelClassName="mb-1.5 block text-sm font-semibold text-slate-700" />
+              </div>
 
               <button type="submit" disabled={saving || !customers.length} className="btn-primary w-full justify-center">
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus size={16} />} {saving ? "Saving…" : "Create billing profile"}

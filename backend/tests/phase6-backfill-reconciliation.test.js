@@ -438,11 +438,13 @@ test("Bank Reconciliation: exact match, suggested match, confirm match, unmatch 
   const csv = "Date,Narration,Chq/Ref No,Withdrawal,Deposit,Balance\n" +
     "01/05/2026,CLIENT ADVANCE,UTR98765,,50000.00,150000.00";
 
+  // Manual flow (automatic matching off): the row is only suggested.
   await importBankStatementCsv({
     businessId: toor._id,
     bankAccountId: toorBank._id,
     csvText: csv,
     userId: owner._id,
+    autoMatch: false,
   });
 
   const stmt = await BankStatementTransaction.findOne({ bankAccountId: toorBank._id });
@@ -492,6 +494,40 @@ test("Bank Reconciliation: exact match, suggested match, confirm match, unmatch 
 
   assert.equal(unmatched.status, "SUGGESTED_MATCH");
   assert.equal(unmatched.reconciledJournalEntryId, null);
+});
+
+test("Automatic matching on import: only a single certain entry; an undone match stays undone", async () => {
+  const { toor, toorBank, owner, toorCustomer } = await setupTestEntities();
+  const pay = (amount, date, ref) => Payment.create({ businessId: toor._id, createdBy: owner._id, customerId: toorCustomer._id, amount, direction: "RECEIVED", paymentMethod: "BANK_TRANSFER", paymentDate: new Date(date), status: "POSTED", referenceNumber: ref });
+  await pay(50000, "2026-05-01", "UTR98765"); // reference on the statement
+  await pay(12000, "2026-05-04", ""); // same amount, two days off, nothing else at 12,000
+  await pay(7000, "2026-05-06", ""); // two receipts of 7,000: ambiguous
+  await pay(7000, "2026-05-07", "");
+  await runHistoricalBackfill({ businessId: toor._id, userId: owner._id, mode: "EXECUTE" });
+
+  const csv = "Date,Narration,Chq/Ref No,Withdrawal,Deposit,Balance\n" +
+    "01/05/2026,CLIENT ADVANCE,UTR98765,,50000.00,150000.00\n" +
+    "06/05/2026,NEFT CR ACME,,,12000.00,162000.00\n" +
+    "07/05/2026,NEFT CR BETA,,,7000.00,169000.00\n" +
+    "20/05/2026,INTEREST,,,99.00,169099.00";
+  const result = await importBankStatementCsv({ businessId: toor._id, bankAccountId: toorBank._id, csvText: csv, userId: owner._id });
+  assert.equal(result.autoMatched, 2);
+  assert.equal(result.balanceCheck.checked, 3);
+  assert.equal(result.balanceCheck.breakCount, 0);
+
+  const rows = await BankStatementTransaction.find({ bankAccountId: toorBank._id }).sort({ transactionDate: 1 });
+  assert.deepEqual(rows.map((r) => r.status), ["MATCHED", "MATCHED", "SUGGESTED_MATCH", "UNMATCHED"]);
+  assert.ok(rows[0].matchedAutomatically);
+  assert.match(rows[0].notes, /Matched automatically: Exact reference/);
+  assert.equal(rows[2].suggestedMatches.length, 2, "two possible receipts: left for a person");
+
+  // Undo an automatic match: it is not matched again on the next import or unmatch.
+  await unmatchTransaction({ businessId: toor._id, bankTransactionId: rows[1]._id, userId: owner._id });
+  await importBankStatementCsv({ businessId: toor._id, bankAccountId: toorBank._id, csvText: csv, userId: owner._id });
+  const again = await BankStatementTransaction.findById(rows[1]._id);
+  assert.equal(again.status, "SUGGESTED_MATCH");
+  assert.equal(again.autoMatchRejected, true);
+  assert.equal(again.matchedAutomatically, false);
 });
 
 test("Cross-entity bank reconciliation is strictly blocked", async () => {

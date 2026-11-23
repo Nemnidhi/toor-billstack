@@ -165,6 +165,9 @@ const invoiceSchema = new mongoose.Schema(
     notes: { type: String, trim: true, default: "" },
     // Property / centre this belongs to (profit by location). Free text, blank = not assigned.
     centre: { type: String, trim: true, maxlength: 80, default: "" },
+    // Report tags (see Business.reportingTags): business line (vertical) and category (horizontal).
+    businessLine: { type: String, trim: true, maxlength: 60, default: "" },
+    reportCategory: { type: String, trim: true, maxlength: 60, default: "" },
     termsAndConditions: { type: String, trim: true, default: "" },
     status: {
       type: String,

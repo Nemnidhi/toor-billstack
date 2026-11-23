@@ -13,6 +13,7 @@ const roundMoney = (value) => Math.round((Number(value || 0) + Number.EPSILON) *
 
 const { tdsKind: findTdsKind, TDS_NO_PAN_RATE } = require("../constants/tds");
 const { normalizeTdsKind } = require("../utils/tax-ids");
+const { cleanTags } = require("./reporting-tags.service");
 
 // TDS on this bill: the kind comes from the bill or the supplier's default; the rate from the
 // bill, else the supplier's own rate (lower-deduction certificate), else the usual rate (20% at
@@ -34,7 +35,7 @@ const resolveExpenseTds = ({ payload, supplier, amountBeforeTax }) => {
   return { tdsKind: kindKey, tdsRate: rate, tdsAmount };
 };
 
-const normalizeExpensePayload = async ({ businessId, payload }) => {
+const normalizeExpensePayload = async ({ businessId, payload, previous = {} }) => {
   const category = EXPENSE_CATEGORIES.includes(payload.category) ? payload.category : "Miscellaneous";
   const amountBeforeTax = roundMoney(payload.amountBeforeTax ?? payload.amount ?? 0);
   if (!Number.isFinite(amountBeforeTax) || amountBeforeTax < 0) throw new AppError("Invalid expense amount", 400);
@@ -131,6 +132,7 @@ const normalizeExpensePayload = async ({ businessId, payload }) => {
     referenceNumber: payload.referenceNumber?.trim() || "",
     notes: payload.notes?.trim() || "",
     centre: String(payload.centre || "").trim().slice(0, 80),
+    ...(await cleanTags(businessId, { businessLine: payload.businessLine, reportCategory: payload.reportCategory }, previous)),
     ...tds,
   };
 };
@@ -201,7 +203,7 @@ const updateExpense = async ({ businessId, expenseId, userId, payload }) => {
         }
         if (differs("tdsKind", expense.tdsKind) && !has("tdsRate")) delete merged.tdsRate;
       }
-      const normalized = await normalizeExpensePayload({ businessId, payload: merged });
+      const normalized = await normalizeExpensePayload({ businessId, payload: merged, previous: expense });
       if (normalized.gstType === "REVERSE_CHARGE" && !expense.selfInvoiceNumber) normalized.selfInvoiceNumber = await nextSelfInvoiceNumber({ businessId, date: normalized.expenseDate, session });
       Object.assign(expense, normalized, { updatedBy: userId });
       await expense.save({ session });

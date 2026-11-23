@@ -15,6 +15,7 @@
 
   // Liabilities (2000 - 2999)
   { code: "2010", name: "Accounts Payable", type: "LIABILITY", normalBalance: "CREDIT", description: "Trade creditors / vendor payables" },
+  { code: "2060", name: "Credit Card Payable", type: "LIABILITY", normalBalance: "CREDIT", description: "Spending on credit cards not yet paid off (pay the card bill from the bank to clear it)" },
   { code: "2100", name: "Customer Advances", type: "LIABILITY", normalBalance: "CREDIT", description: "Unallocated customer receipts and advance payments" },
   { code: "2210", name: "CGST Output Payable", type: "LIABILITY", normalBalance: "CREDIT", description: "Central GST collected on taxable sales" },
   { code: "2220", name: "SGST Output Payable", type: "LIABILITY", normalBalance: "CREDIT", description: "State GST collected on taxable sales" },

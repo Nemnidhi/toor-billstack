@@ -36,7 +36,7 @@ const bankAccountSchema = new mongoose.Schema(
     },
     accountType: {
       type: String,
-      enum: ["CURRENT", "SAVINGS", "OVERDRAFT", "OTHER"],
+      enum: ["CURRENT", "SAVINGS", "OVERDRAFT", "CREDIT_CARD", "OTHER"],
       default: "CURRENT",
     },
     currency: {

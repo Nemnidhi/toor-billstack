@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import {
   cancelAssetRequest, cancelDepositRequest, createAssetRequest, createDepositRequest, disposeAssetRequest, downloadTallyXml,
   getAssetClassesRequest, getAssetRegisterRequest, getAssetsRequest, getDepositsRequest, getGstr9Request, getItBlocksRequest,
   getMsmeReportRequest, getScheduleIIIRequest, moveDepositRequest, runDepreciationRequest,
+  getDepositSetOffRequest, setOffDepositRequest, undoDepositSetOffRequest,
 } from "../api";
-import { listExpensesRequest } from "../../auth/api";
+import { createInvoiceRequest, listCustomersRequest, listExpensesRequest } from "../../auth/api";
 import { money } from "../../dashboard/reportPresentation";
 
 const card = "rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900";
@@ -36,14 +37,25 @@ const save = (blob, name, type) => {
 
 const DepositsPanel = ({ params }) => {
   const [data, setData] = useState(null);
-  const [form, setForm] = useState({ direction: "RECEIVED", partyName: "", amount: "", date: "", mode: "BANK", purpose: "SECURITY", agreementEnd: "", reference: "" });
+  const [form, setForm] = useState({ direction: "RECEIVED", customerId: "", partyName: "", amount: "", date: "", mode: "BANK", purpose: "SECURITY", agreementEnd: "", reference: "" });
   const [move, setMove] = useState(null);
+  const [setOff, setSetOff] = useState(null); // the deposit whose set-off panel is open
+  const [history, setHistory] = useState("");
+  const [customers, setCustomers] = useState([]);
   const [error, setError] = useState("");
   const load = async () => { try { setData(await getDepositsRequest(params)); setError(""); } catch (err) { setError(errorText(err)); } };
   useEffect(() => { load(); }, [params.entity]);
+  useEffect(() => {
+    listCustomersRequest({ page: 1, limit: 500, sortBy: "name", sortOrder: "asc" }).then((d) => setCustomers(Array.isArray(d) ? d : d?.items || [])).catch(() => {});
+  }, []);
+  const undo = async (row, m) => {
+    if (!window.confirm(`Undo the set-off of ${money(m.amount)}? The invoices are due again and the deposit holds the money again.`)) return;
+    try { await undoDepositSetOffRequest(row._id, m._id, params); await load(); } catch (err) { setError(errorText(err)); }
+  };
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const create = async () => {
-    try { await createDepositRequest(form, params); setForm((f) => ({ ...f, partyName: "", amount: "", reference: "" })); await load(); } catch (err) { setError(errorText(err)); }
+    const payload = { ...form, customerId: form.direction === "RECEIVED" ? form.customerId || undefined : undefined };
+    try { await createDepositRequest(payload, params); setForm((f) => ({ ...f, customerId: "", partyName: "", amount: "", reference: "" })); await load(); } catch (err) { setError(errorText(err)); }
   };
   const doMove = async () => {
     try { await moveDepositRequest(move.id, move, params); setMove(null); await load(); } catch (err) { setError(errorText(err)); }
@@ -63,6 +75,12 @@ const DepositsPanel = ({ params }) => {
         <h3 className="text-sm font-bold">New deposit</h3>
         <div className="mt-3 flex flex-wrap gap-2">
           <select className={input} value={form.direction} onChange={set("direction")} aria-label="Direction"><option value="RECEIVED">Received from a tenant</option><option value="GIVEN">Given to a landlord / other</option></select>
+          {form.direction === "RECEIVED" ? (
+            <select className={input} value={form.customerId} onChange={(e) => { const c = customers.find((x) => x._id === e.target.value); setForm((f) => ({ ...f, customerId: e.target.value, partyName: c ? c.name : f.partyName })); }} aria-label="Customer">
+              <option value="">Customer (needed to set off invoices)</option>
+              {customers.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+            </select>
+          ) : null}
           <input className={input} placeholder="From / to" value={form.partyName} onChange={set("partyName")} />
           <input className={input} type="number" placeholder="Amount" value={form.amount} onChange={set("amount")} />
           <input className={input} type="date" value={form.date} onChange={set("date")} aria-label="Date" />
@@ -79,8 +97,12 @@ const DepositsPanel = ({ params }) => {
           <thead><tr><th className={th}>No.</th><th className={th}>Date</th><th className={th}>Party</th><th className={th}>Type</th><th className={thr}>Amount</th><th className={thr}>Balance</th><th className={th}>Ends</th><th className={th} /></tr></thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {(data?.rows || []).map((r) => (
-              <tr key={r._id}>
-                <td className={td}>{r.depositNumber}</td><td className={td}>{day(r.date)}</td><td className={td}>{r.partyName}</td>
+              <Fragment key={r._id}>
+              <tr>
+                <td className={td}>
+                  {r.depositNumber}
+                  {r.movements?.length ? <button type="button" className="block text-[11px] text-brand-600 hover:underline" onClick={() => setHistory(history === r._id ? "" : r._id)}>{history === r._id ? "Hide history" : `History (${r.movements.length})`}</button> : null}
+                </td><td className={td}>{day(r.date)}</td><td className={td}>{r.partyName}</td>
                 <td className={td}>{r.direction === "RECEIVED" ? "Received" : "Given"} · {r.purpose.toLowerCase()}</td>
                 <td className={tdr}>{money(r.amount)}</td><td className={tdr}>{money(r.balance)}</td><td className={td}>{day(r.agreementEnd)}</td>
                 <td className={td}>
@@ -96,17 +118,151 @@ const DepositsPanel = ({ params }) => {
                     ) : (
                       <div className="flex gap-1">
                         <button type="button" className={ghost} onClick={() => setMove({ id: r._id, kind: "REFUND", amount: r.balance, date: new Date().toISOString().slice(0, 10) })}>Refund / adjust</button>
+                        {r.direction === "RECEIVED" ? <button type="button" className={ghost} onClick={() => setSetOff(setOff === r._id ? null : r._id)}>Pay invoices / keep with GST</button> : null}
                         {!r.movements?.length ? <button type="button" className={ghost} onClick={() => cancel(r)}>Cancel</button> : null}
                       </div>
                     )
                   ) : <span className="text-slate-400">closed</span>}
                 </td>
               </tr>
+              {history === r._id ? (
+                <tr><td colSpan={8} className="bg-slate-50/60 px-3 py-2 dark:bg-slate-800/30">
+                  <ul className="space-y-1 text-xs">
+                    {r.movements.map((m) => (
+                      <li key={m._id} className={m.undoneAt ? "text-slate-400 line-through" : ""}>
+                        {day(m.date)} · {MOVE_TEXT[m.kind] || m.kind} {money(m.amount)}
+                        {m.invoices?.length ? ` (${m.invoices.map((i) => `${i.invoiceNumber} ${money(i.amount)}`).join(", ")})` : ""}
+                        {m.note ? ` · ${m.note}` : ""}
+                        {m.kind === "SET_OFF" && !m.undoneAt ? <button type="button" className="ml-2 text-rose-600 hover:underline" onClick={() => undo(r, m)}>Undo</button> : null}
+                        {m.undoneAt ? <span className="ml-2 no-underline">undone {day(m.undoneAt)}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </td></tr>
+              ) : null}
+              {setOff === r._id ? (
+                <tr><td colSpan={8} className="bg-slate-50/60 px-3 py-3 dark:bg-slate-800/30">
+                  <SetOffPanel deposit={r} params={params} customers={customers} onDone={async () => { setSetOff(null); await load(); }} />
+                </td></tr>
+              ) : null}
+              </Fragment>
             ))}
             {data && !data.rows.length ? <tr><td className={td} colSpan={8}>No deposits yet.</td></tr> : null}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+};
+
+const MOVE_TEXT = { REFUND: "Refunded", FORFEIT: "Kept (forfeited)", ADJUST_RENT: "Adjusted against rent", WRITE_OFF: "Written off", SET_OFF: "Paid invoices" };
+const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
+// D15: (a) the deposit pays the tenant's unpaid invoices; (b) part of it is kept with GST: a tax
+// invoice for the amount kept (GST included, so it reaches GSTR-1), paid from the deposit.
+const SetOffPanel = ({ deposit, params, customers, onDone }) => {
+  const [customerId, setCustomerId] = useState(deposit.customerId || "");
+  const [invoices, setInvoices] = useState(null);
+  const [amounts, setAmounts] = useState({});
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [note, setNote] = useState("");
+  const [keep, setKeep] = useState({ amount: "", rate: "18", text: "Notice period recovery (kept from security deposit)", sac: "997212" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState("");
+
+  useEffect(() => {
+    if (!customerId) return setInvoices([]);
+    getDepositSetOffRequest(deposit._id, { ...params, customerId }).then((d) => setInvoices(d.invoices || [])).catch((err) => setError(errorText(err)));
+  }, [customerId]);
+
+  // Oldest first, until the deposit runs out.
+  const fill = () => {
+    let left = deposit.balance;
+    const next = {};
+    for (const inv of invoices || []) {
+      const take = round2(Math.min(inv.balanceDue, left));
+      if (take <= 0) break;
+      next[inv._id] = take;
+      left = round2(left - take);
+    }
+    setAmounts(next);
+  };
+  const chosen = Object.entries(amounts).filter(([, v]) => Number(v) > 0).map(([invoiceId, amount]) => ({ invoiceId, amount: Number(amount) }));
+  const total = round2(chosen.reduce((s, a) => s + a.amount, 0));
+
+  const pay = async (allocations, message) => {
+    const res = await setOffDepositRequest(deposit._id, { customerId, date, note, allocations }, params);
+    if (res.failed?.length) throw new Error(`Saved, but not applied to ${res.failed.map((f) => `${f.invoiceNumber} (${f.message})`).join(", ")}. The amount waits as the customer's advance in Payments.`);
+    setDone(message);
+  };
+  const submit = async () => {
+    setBusy(true); setError("");
+    try { await pay(chosen, `${money(total)} paid from the deposit.`); await onDone(); } catch (err) { setError(errorText(err)); } finally { setBusy(false); }
+  };
+  const keepWithGst = async () => {
+    const kept = round2(keep.amount);
+    const rate = Number(keep.rate || 0);
+    if (!(kept > 0) || kept > deposit.balance) return setError(`Enter an amount up to ${money(deposit.balance)}`);
+    if (!window.confirm(`Raise a tax invoice of ${money(kept)} (GST ${rate}% included) to the tenant and pay it from the deposit?`)) return;
+    setBusy(true); setError("");
+    try {
+      const invoice = await createInvoiceRequest({
+        customerId, invoiceDate: date, allowDuplicate: true,
+        notes: `Recovered from security deposit ${deposit.depositNumber}`,
+        lineItems: [{ productName: keep.text, hsnSac: keep.sac, quantity: 1, rate: round2(kept / (1 + rate / 100)), taxRate: rate }],
+      });
+      await pay([{ invoiceId: invoice._id, amount: Math.min(invoice.grandTotal, deposit.balance) }], `Invoice ${invoice.invoiceNumber} raised and paid from the deposit.`);
+      await onDone();
+    } catch (err) { setError(errorText(err)); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="space-y-4 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-semibold">Deposit {deposit.depositNumber}: {money(deposit.balance)} left.</span>
+        {!deposit.customerId ? (
+          <select className={input} value={customerId} onChange={(e) => setCustomerId(e.target.value)} aria-label="Whose deposit">
+            <option value="">Whose deposit is this? (customer)</option>
+            {customers.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+          </select>
+        ) : null}
+        <label className="flex items-center gap-1 text-slate-500">Date <input className={input} type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+        <input className={`${input} w-64`} placeholder="Note (e.g. tenant left in November)" value={note} onChange={(e) => setNote(e.target.value)} />
+      </div>
+
+      <div>
+        <div className="flex items-center gap-2"><h4 className="font-bold">Pay unpaid invoices</h4>{invoices?.length ? <button type="button" className="text-brand-600 hover:underline" onClick={fill}>Fill oldest first</button> : null}</div>
+        {invoices === null ? <p className="text-slate-400">Loading...</p> : !invoices.length ? <p className="text-slate-500">{customerId ? "No unpaid invoices for this customer." : "Choose the customer first."}</p> : (
+          <table className="mt-2 min-w-[520px]">
+            <thead><tr><th className={th}>Invoice</th><th className={th}>Date</th><th className={thr}>Due</th><th className={thr}>Pay from deposit</th></tr></thead>
+            <tbody>
+              {invoices.map((inv) => (
+                <tr key={inv._id}>
+                  <td className={td}>{inv.invoiceNumber}</td><td className={td}>{day(inv.invoiceDate)}</td><td className={tdr}>{money(inv.balanceDue)}</td>
+                  <td className={tdr}><input className={`${input} w-28 text-right`} type="number" min="0" step="0.01" value={amounts[inv._id] ?? ""} onChange={(e) => setAmounts((a) => ({ ...a, [inv._id]: e.target.value }))} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <button type="button" className={`${button} mt-2`} disabled={busy || !chosen.length || total > deposit.balance} onClick={submit}>{busy ? "Saving..." : `Pay ${money(total)} from the deposit`}</button>
+        {total > deposit.balance ? <p className="mt-1 text-rose-600">That is more than the {money(deposit.balance)} left.</p> : null}
+      </div>
+
+      <div className="border-t border-slate-200 pt-3 dark:border-slate-700">
+        <h4 className="font-bold">Keep part of it, with GST</h4>
+        <p className="mt-1 text-slate-500">For notice-period recovery or damages charged as a supply: a tax invoice for the amount kept (GST included) is raised to the tenant and paid from the deposit, so it shows in GSTR-1. Ask your CA whether GST applies to your case; to keep money without GST, use Refund / adjust, then Forfeit.</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <input className={`${input} w-32`} type="number" placeholder="Amount kept" value={keep.amount} onChange={(e) => setKeep({ ...keep, amount: e.target.value })} />
+          <select className={input} value={keep.rate} onChange={(e) => setKeep({ ...keep, rate: e.target.value })} aria-label="GST rate"><option value="18">GST 18%</option><option value="12">GST 12%</option><option value="5">GST 5%</option><option value="0">No GST</option></select>
+          <input className={`${input} w-80`} value={keep.text} onChange={(e) => setKeep({ ...keep, text: e.target.value })} aria-label="Invoice line" />
+          <input className={`${input} w-24`} value={keep.sac} onChange={(e) => setKeep({ ...keep, sac: e.target.value })} aria-label="SAC" title="SAC (997212: renting of non-residential property)" />
+          <button type="button" className={button} disabled={busy || !customerId || !keep.amount} onClick={keepWithGst}>Raise invoice and pay it from the deposit</button>
+        </div>
+      </div>
+      {done ? <p className="font-semibold text-emerald-700">{done}</p> : null}
+      <Err text={error} />
     </div>
   );
 };

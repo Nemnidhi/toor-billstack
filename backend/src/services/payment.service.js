@@ -416,13 +416,16 @@ const getCustomerAdvances = async ({ businessId, customerId }) => {
 // reversePayment
 // ---------------------------------------------------------------------------
 
-const reversePayment = async ({ businessId, userId, paymentId, reason = "" }) => {
+const reversePayment = async ({ businessId, userId, paymentId, reason = "", fromDeposit = false }) => {
   const session = await mongoose.startSession();
   try {
     let reversal;
     await session.withTransaction(async () => {
       const payment = await Payment.findOne({ _id: paymentId, businessId, status: "POSTED" }).session(session);
       if (!payment) throw new AppError("Posted payment not found", 404);
+      if (payment.paymentMethod === "DEPOSIT_SET_OFF" && !fromDeposit) {
+        throw new AppError(`This receipt is a set-off from deposit ${payment.referenceNumber}. Undo it from Deposits, so the deposit gets the money back too.`, 409);
+      }
       const existingReversal = await Payment.findOne({ businessId, reversalOfPaymentId: payment._id }).session(session);
       if (existingReversal) throw new AppError("This payment has already been reversed", 409);
       const activeAllocatedMinor = await netPaymentAllocations({ businessId, paymentId: payment._id, session });

@@ -3,6 +3,9 @@
 //   RECEIVED  REFUND   Dr 2410 / Cr bank      FORFEIT  Dr 2410 / Cr 4100 Other income
 //   GIVEN     REFUND   Dr bank / Cr 1210      ADJUST_RENT  Dr 5020 Rent / Cr 1210
 //             WRITE_OFF Dr 5210 / Cr 1210
+//   RECEIVED  SET_OFF  the deposit pays the customer's unpaid invoices: a receipt with method
+//             DEPOSIT_SET_OFF (Dr 2410 / Cr 2100 advances) allocated to them (Dr 2100 / Cr 1100), so
+//             the invoices, the customer's ledger and statements show it like any payment.
 const mongoose = require("mongoose");
 const AppError = require("../utils/appError");
 const Deposit = require("../models/Deposit");
@@ -18,7 +21,8 @@ const parseDate = (value, label) => {
   if (Number.isNaN(d.getTime())) throw new AppError(`Enter a valid ${label}`, 400);
   return d;
 };
-const balanceOf = (deposit) => round2(deposit.amount - (deposit.movements || []).reduce((s, m) => s + m.amount, 0));
+const live = (movements) => (movements || []).filter((m) => !m.undoneAt);
+const balanceOf = (deposit) => round2(deposit.amount - live(deposit.movements).reduce((s, m) => s + m.amount, 0));
 
 const MOVES = {
   RECEIVED: {
@@ -31,7 +35,7 @@ const MOVES = {
     WRITE_OFF: (amt) => [["5210", amt, 0], ["1210", 0, amt]],
   },
 };
-const MOVE_LABEL = { REFUND: "refunded", FORFEIT: "forfeited", ADJUST_RENT: "adjusted against rent", WRITE_OFF: "written off" };
+const MOVE_LABEL = { REFUND: "refunded", FORFEIT: "forfeited", ADJUST_RENT: "adjusted against rent", WRITE_OFF: "written off", SET_OFF: "set off against invoices" };
 
 const post = async ({ deposit, key, date, rows, description, userId, session }) => {
   const accounts = await accounting.ensureDefaultAccounts({ businessId: deposit.businessId, session });
@@ -139,7 +143,9 @@ const depositRegister = async ({ businessId, direction, asOf }) => {
   filter.date = { $lte: cut };
   const rows = (await Deposit.find(filter).sort({ date: 1 }).lean()).map((d) => {
     const moves = (d.movements || []).filter((m) => new Date(m.date) <= cut);
-    const balance = round2(d.amount - moves.reduce((s, m) => s + m.amount, 0));
+    // An undone set-off stays in the history but no longer counts.
+    const counted = moves.filter((m) => !(m.undoneAt && new Date(m.undoneAt) <= cut));
+    const balance = round2(d.amount - counted.reduce((s, m) => s + m.amount, 0));
     return { ...d, balance, movements: moves };
   });
   const sum = (dir) => round2(rows.filter((r) => r.direction === dir).reduce((s, r) => s + r.balance, 0));
@@ -152,4 +158,124 @@ const depositRegister = async ({ businessId, direction, asOf }) => {
   };
 };
 
-module.exports = { addMovement, cancelDeposit, createDeposit, depositRegister };
+// ---------------------------------------------------------------------------
+// Set-off (client answer D15a): a tenant's deposit pays their unpaid invoices.
+// ---------------------------------------------------------------------------
+
+/** The customer's invoices that a deposit can pay: issued, money still due. */
+const setOffCandidates = async ({ businessId, depositId, customerId }) => {
+  const deposit = await Deposit.findOne({ _id: depositId, businessId }).lean();
+  if (!deposit) throw new AppError("Deposit not found", 404);
+  // A deposit entered without a customer: the page asks whose it is first.
+  const whose = deposit.customerId || (customerId && mongoose.isValidObjectId(customerId) ? customerId : null);
+  if (!whose) return { deposit: { ...deposit, balance: balanceOf(deposit) }, invoices: [] };
+  const Invoice = require("../models/Invoice");
+  const invoices = await Invoice.find({ businessId, customerId: whose, status: { $nin: ["cancelled", "draft"] }, balanceDue: { $gt: 0 } })
+    .sort({ invoiceDate: 1 }).select("invoiceNumber invoiceDate dueDate grandTotal balanceDue paymentStatus").lean();
+  return { deposit: { ...deposit, balance: balanceOf(deposit) }, invoices };
+};
+
+/**
+ * Pays invoices out of a deposit received. allocations: [{ invoiceId, amount }].
+ * Order of work keeps the deposit and the books in step: the receipt (Dr 2410) and the deposit's
+ * SET_OFF movement first, then the allocations; if an allocation fails, the money waits as the
+ * customer's advance (Payments) and can be allocated there.
+ */
+const setOffAgainstInvoices = async ({ businessId, userId, depositId, payload = {} }) => {
+  const Invoice = require("../models/Invoice");
+  const paymentService = require("./payment.service");
+  const date = parseDate(payload.date, "set-off date");
+  const wanted = (Array.isArray(payload.allocations) ? payload.allocations : [])
+    .map((a) => ({ invoiceId: String(a.invoiceId || ""), amount: round2(a.amount) }))
+    .filter((a) => a.invoiceId && a.amount > 0);
+  if (!wanted.length) throw new AppError("Choose the invoices to pay from the deposit", 400);
+  if (new Set(wanted.map((a) => a.invoiceId)).size !== wanted.length) throw new AppError("An invoice is listed twice", 400);
+
+  const deposit = await Deposit.findOne({ _id: depositId, businessId });
+  if (!deposit) throw new AppError("Deposit not found", 404);
+  if (deposit.direction !== "RECEIVED") throw new AppError("Only a deposit received from a customer can pay their invoices", 400);
+  if (deposit.status !== "OPEN") throw new AppError("This deposit is closed", 409);
+  if (!deposit.customerId && payload.customerId) {
+    // An older deposit typed with a name only: link it to the customer now (kept for next time).
+    const customer = mongoose.isValidObjectId(payload.customerId) ? await Customer.findOne({ _id: payload.customerId, businessId }).select("_id").lean() : null;
+    if (!customer) throw new AppError("Customer not found", 404);
+    deposit.customerId = customer._id;
+    await deposit.save();
+  }
+  if (!deposit.customerId) throw new AppError("Choose whose deposit this is (the customer), then set it off", 400);
+  if (date < deposit.date) throw new AppError("The date is before the deposit", 400);
+
+  const invoices = await Invoice.find({ _id: { $in: wanted.map((a) => a.invoiceId) }, businessId }).select("invoiceNumber customerId balanceDue status").lean();
+  const byId = new Map(invoices.map((inv) => [String(inv._id), inv]));
+  for (const a of wanted) {
+    const inv = byId.get(a.invoiceId);
+    if (!inv) throw new AppError("Invoice not found", 404);
+    if (String(inv.customerId) !== String(deposit.customerId)) throw new AppError(`Invoice ${inv.invoiceNumber} is not ${deposit.partyName}'s`, 400);
+    if (["cancelled", "draft"].includes(inv.status)) throw new AppError(`Invoice ${inv.invoiceNumber} is ${inv.status}`, 400);
+    if (a.amount > round2(inv.balanceDue) + 0.004) throw new AppError(`Only ${round2(inv.balanceDue)} is due on invoice ${inv.invoiceNumber}`, 400);
+    a.invoiceNumber = inv.invoiceNumber;
+  }
+  const total = round2(wanted.reduce((s, a) => s + a.amount, 0));
+  if (total > balanceOf(deposit) + 0.004) throw new AppError(`Only ${balanceOf(deposit)} is left on this deposit`, 400);
+
+  const note = String(payload.note || "").trim();
+  const payment = await paymentService.createPayment({
+    businessId,
+    userId,
+    payload: {
+      direction: "RECEIVED", customerId: deposit.customerId, amount: total, paymentDate: date, paymentMethod: "DEPOSIT_SET_OFF",
+      referenceNumber: deposit.depositNumber, notes: `Paid from deposit ${deposit.depositNumber}${note ? `: ${note}` : ""}`,
+      idempotencyKey: payload.idempotencyKey ? `DEPOSIT_SETOFF:${deposit._id}:${String(payload.idempotencyKey).slice(0, 60)}` : "",
+    },
+  });
+
+  // Record it on the deposit (once, even if the same request comes twice).
+  const already = await Deposit.findOne({ _id: deposit._id, "movements.paymentId": payment._id }).lean();
+  if (!already) {
+    const updated = await Deposit.findOneAndUpdate(
+      { _id: deposit._id, businessId, status: "OPEN" },
+      { $push: { movements: { kind: "SET_OFF", amount: total, date, mode: "", note, createdBy: userId, paymentId: payment._id, invoices: wanted.map(({ invoiceId, invoiceNumber, amount }) => ({ invoiceId, invoiceNumber, amount })) } } },
+      { new: true },
+    );
+    if (!updated) throw new AppError("This deposit was closed meanwhile; the receipt is in Payments as the customer's advance", 409);
+    if (balanceOf(updated) <= 0.004) await Deposit.updateOne({ _id: deposit._id }, { $set: { status: "CLOSED" } });
+  }
+
+  const failed = [];
+  for (const a of wanted) {
+    try {
+      await paymentService.allocatePayment({ businessId, userId, paymentId: payment._id, payload: { invoiceId: a.invoiceId, allocatedAmount: a.amount } });
+    } catch (error) {
+      failed.push({ invoiceNumber: a.invoiceNumber, message: error.message });
+    }
+  }
+  return { deposit: (await Deposit.findById(deposit._id)).toObject(), paymentId: payment._id, total, failed };
+};
+
+/** Undoes a set-off: the invoices are due again and the deposit holds the money again. */
+const undoSetOff = async ({ businessId, userId, depositId, movementId, reason = "" }) => {
+  const paymentService = require("./payment.service");
+  const PaymentAllocation = require("../models/PaymentAllocation");
+  const deposit = await Deposit.findOne({ _id: depositId, businessId });
+  if (!deposit) throw new AppError("Deposit not found", 404);
+  const move = deposit.movements.id(movementId);
+  if (!move || move.kind !== "SET_OFF") throw new AppError("Set-off not found on this deposit", 404);
+  if (move.undoneAt) return deposit.toObject();
+
+  const allocations = await PaymentAllocation.find({ businessId, paymentId: move.paymentId }).lean();
+  for (const allocation of allocations) {
+    try {
+      await paymentService.reverseAllocation({ businessId, userId, allocationId: allocation._id, reason: `Set-off from deposit ${deposit.depositNumber} undone` });
+    } catch (error) {
+      if (!/already been reversed|fully reversed/i.test(error.message)) throw error;
+    }
+  }
+  await paymentService.reversePayment({ businessId, userId, paymentId: move.paymentId, reason: reason || `Set-off from deposit ${deposit.depositNumber} undone`, fromDeposit: true });
+  move.undoneAt = new Date();
+  move.undoneBy = userId;
+  if (deposit.status === "CLOSED" && balanceOf(deposit) > 0.004) deposit.status = "OPEN";
+  await deposit.save();
+  return deposit.toObject();
+};
+
+module.exports = { addMovement, cancelDeposit, createDeposit, depositRegister, setOffAgainstInvoices, setOffCandidates, undoSetOff };

@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { CircleAlert, IndianRupee, Plus, ReceiptText, Search, X } from "lucide-react";
+import { Camera, CircleAlert, IndianRupee, Plus, ReceiptText, Search, X } from "lucide-react";
 import { EmptyState, LoadingState } from "../../../components/ui/PageState";
 import PageHeader from "../../../components/ui/PageHeader";
 import CentreInput, { forgetCentres } from "../../../components/ui/CentreInput";
+import ReportTagFields from "../../../components/ui/ReportTagFields";
 import { TDS_KINDS } from "../../../components/ui/TdsFields";
 import DocumentsPanel from "../../../components/ui/DocumentsPanel";
 import { uiStore } from "../../../store/uiStore";
@@ -15,8 +16,11 @@ import {
   listExpensesRequest,
   listSuppliersRequest,
   rcmDocumentsRequest,
+  readBillRequest,
+  readBillStatusRequest,
   updateExpenseRequest,
 } from "../../auth/api";
+import { uploadDocumentRequest } from "../../accounting/api";
 
 const blankExpense = {
   expenseDate: new Date().toISOString().slice(0, 10),
@@ -34,9 +38,13 @@ const blankExpense = {
   referenceNumber: "",
   notes: "",
   centre: "",
+  businessLine: "",
+  reportCategory: "",
   supplierId: "",
   supplierInvoiceNumber: "",
   supplierInvoiceDate: "",
+  supplierGstin: "",
+  placeOfSupplyCode: "",
   itcEligible: true,
   // "__supplier__" = take the supplier's usual TDS type; "" = no TDS on this bill
   tdsKind: "__supplier__",
@@ -60,10 +68,12 @@ const estimateExpenseTds = (form, supplier) => {
 };
 
 const paymentStatuses = ["UNPAID", "PAID", "PARTIAL"];
-const paymentMethods = ["", "CASH", "BANK_TRANSFER", "CHEQUE", "UPI", "CARD", "OTHER"];
+// CARD: a debit card (paid from the bank). CREDIT_CARD: owed to the card until its bill is paid.
+const paymentMethods = ["", "CASH", "BANK_TRANSFER", "CHEQUE", "UPI", "CARD", "CREDIT_CARD", "OTHER"];
 const money = (value) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(value || 0));
 const humanize = (value) => {
   const text = String(value || "").replaceAll("_", " ").toLowerCase();
+  if (text === "card") return "Debit card";
   return text === "upi" ? "UPI" : text.charAt(0).toUpperCase() + text.slice(1);
 };
 const date = (value) => (value ? new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—");
@@ -86,6 +96,8 @@ const ExpensesPage = () => {
   const [form, setForm] = useState(blankExpense);
   const [suppliers, setSuppliers] = useState([]);
   const [saving, setSaving] = useState(false);
+  // The bill photo / PDF read into this form: kept to attach to the expense once it is saved.
+  const [billFile, setBillFile] = useState(null);
   const savingLock = useRef(false);
 
   const estimatedTotal = useMemo(() => {
@@ -116,7 +128,7 @@ const ExpensesPage = () => {
     listSuppliersRequest({ page: 1, limit: 200, sortBy: "supplierName", sortOrder: "asc" }).then((data) => setSuppliers(data?.items || [])).catch(() => {});
   }, []);
 
-  const openCreate = () => { setForm(blankExpense); setEditor("new"); };
+  const openCreate = () => { setForm(blankExpense); setBillFile(null); setEditor("new"); };
   useCreateAction({ ready: !loading, moduleKey: "expenses", roles: ["owner", "admin", "accountant"], onCreate: openCreate, focusSelector: '#expense-editor input' });
   const openEdit = (expense) => {
     setForm({
@@ -133,8 +145,10 @@ const ExpensesPage = () => {
       // leave the amount blank when it is just rate x amount, so it follows edits to the bill
       tdsAmount: expense.tdsKind && Number(expense.tdsAmount) !== Math.round((Number(expense.amountBeforeTax || 0) * Number(expense.tdsRate || 0)) / 100) ? expense.tdsAmount ?? "" : "",
     });
+    setBillFile(null);
     setEditor(expense);
   };
+  const mergeForm = (fields) => setForm((current) => ({ ...current, ...fields }));
   const updateForm = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const updateFilter = (key, value) => setFilters((current) => ({ ...current, page: 1, [key]: value }));
 
@@ -163,8 +177,12 @@ const ExpensesPage = () => {
       if (tdsKind !== "__supplier__") payload.tdsKind = tdsKind;
       if (tdsKind && tdsRate !== "" && tdsRate !== null && tdsRate !== undefined) payload.tdsRate = Number(tdsRate);
       if (tdsKind && tdsAmount !== "" && tdsAmount !== null && tdsAmount !== undefined) payload.tdsAmount = Number(tdsAmount);
-      if (editor === "new") await createExpenseRequest(payload);
-      else await updateExpenseRequest(editor._id, payload);
+      const saved = editor === "new" ? await createExpenseRequest(payload) : await updateExpenseRequest(editor._id, payload);
+      if (billFile && saved?._id) {
+        await uploadDocumentRequest("expense", saved._id, { fileBase64: billFile.fileBase64, fileName: billFile.fileName, kind: "BILL" }).catch(() => {
+          uiStore.getState().pushToast({ tone: "warning", message: "Expense saved, but the bill could not be attached. Attach it from Docs." });
+        });
+      }
       if (payload.centre) forgetCentres();
       uiStore.getState().pushToast({ tone: "success", message: editor === "new" ? "Expense recorded." : "Expense updated." });
       setEditor(null);
@@ -244,7 +262,7 @@ const ExpensesPage = () => {
                 <tr className="border-t" style={{ borderColor: "var(--panel-border)" }}>
                   <td className="p-4 whitespace-nowrap font-semibold">{expense.expenseNumber}</td>
                   <td className="p-4 whitespace-nowrap">{date(expense.expenseDate)}</td>
-                  <td className="p-4">{expense.category}{expense.customCategory ? ` / ${expense.customCategory}` : ""}{expense.centre ? <span className="block text-xs" style={{ color: "var(--text-muted)" }}>{expense.centre}</span> : null}</td>
+                  <td className="p-4">{expense.category}{expense.customCategory ? ` / ${expense.customCategory}` : ""}{[expense.centre, expense.businessLine, expense.reportCategory].some(Boolean) ? <span className="block text-xs" style={{ color: "var(--text-muted)" }}>{[expense.centre, expense.businessLine, expense.reportCategory].filter(Boolean).join(" · ")}</span> : null}</td>
                   <td className="p-4">{expense.vendorName || expense.supplierId?.supplierName || "—"}<p className="text-xs" style={{ color: "var(--text-muted)" }}>{expense.description || ""}</p></td>
                   <td className="p-4 whitespace-nowrap text-right font-semibold">{money(expense.totalAmount)}</td>
                   <td className="p-4 whitespace-nowrap text-right">{money(expense.taxAmount)}<p className="text-xs" style={{ color: "var(--text-muted)" }}>{expense.gstType === "GST_RECORDED" ? `${expense.gstRate}% recorded` : expense.gstType === "NONE" ? "No GST" : humanize(expense.gstType)}</p></td>
@@ -274,7 +292,7 @@ const ExpensesPage = () => {
         </div>
       </section>
 
-      {editor ? <ExpenseModal form={form} setForm={updateForm} suppliers={suppliers} categories={categories} saving={saving} error={error} estimatedTotal={estimatedTotal} mode={editor === "new" ? "new" : "edit"} onSave={saveExpense} onClose={() => setEditor(null)} /> : null}
+      {editor ? <ExpenseModal form={form} setForm={updateForm} mergeForm={mergeForm} billFile={billFile} setBillFile={setBillFile} suppliers={suppliers} categories={categories} saving={saving} error={error} estimatedTotal={estimatedTotal} mode={editor === "new" ? "new" : "edit"} onSave={saveExpense} onClose={() => setEditor(null)} /> : null}
     </div>
   );
 };
@@ -310,10 +328,11 @@ const ExpenseTds = ({ form, setForm, suppliers }) => {
   );
 };
 
-const ExpenseModal = ({ form, setForm, suppliers = [], categories, saving, error, estimatedTotal, mode, onSave, onClose }) => (
+const ExpenseModal = ({ form, setForm, mergeForm, billFile, setBillFile, suppliers = [], categories, saving, error, estimatedTotal, mode, onSave, onClose }) => (
   <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/55 p-4">
     <form id="expense-editor" onSubmit={onSave} className="mx-auto my-6 w-full max-w-3xl rounded-2xl border p-6 shadow-2xl" style={{ borderColor: "var(--panel-border)", background: "var(--theme-surface-strong)" }}>
       <div className="flex justify-between gap-4"><div><p className="text-sm font-medium text-brand-600">Expense details</p><h3 className="mt-1 text-xl font-semibold">{mode === "new" ? "Add expense" : "Edit expense"}</h3></div><button type="button" disabled={saving} onClick={onClose}><X size={20} /></button></div>
+      {mode === "new" ? <BillReader mergeForm={mergeForm} billFile={billFile} setBillFile={setBillFile} disabled={saving} /> : null}
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
         <Field label="Expense date"><input required type="date" value={form.expenseDate || ""} onChange={(e) => setForm("expenseDate", e.target.value)} className="field" /></Field>
         <Field label="Category"><select value={form.category || "Miscellaneous"} onChange={(e) => setForm("category", e.target.value)} className="field">{categories.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
@@ -321,6 +340,7 @@ const ExpenseModal = ({ form, setForm, suppliers = [], categories, saving, error
         <Field label="Supplier / landlord (optional)"><select value={form.supplierId || ""} onChange={(e) => setForm("supplierId", e.target.value)} className="field"><option value="">Not a saved supplier</option>{suppliers.map((item) => <option key={item._id} value={item._id}>{item.supplierName}</option>)}</select></Field>
         <Field label="Vendor / payee"><input value={form.vendorName || ""} onChange={(e) => setForm("vendorName", e.target.value)} className="field" /></Field>
         <Field label="Centre / property (optional)"><CentreInput value={form.centre} onChange={(value) => setForm("centre", value)} /></Field>
+        <ReportTagFields value={form} onChange={(field, value) => setForm(field, value)} />
         <Field label="Amount before GST"><input required min="0" step="0.01" type="number" value={form.amountBeforeTax || ""} onChange={(e) => setForm("amountBeforeTax", e.target.value)} className="field" /></Field>
         <Field label="Paid amount"><input min="0" step="0.01" type="number" value={form.paidAmount || ""} onChange={(e) => setForm("paidAmount", e.target.value)} className="field" /></Field>
         <Field label="Payment status"><select value={form.paymentStatus || "UNPAID"} onChange={(e) => setForm("paymentStatus", e.target.value)} className="field">{paymentStatuses.map((item) => <option key={item} value={item}>{humanize(item)}</option>)}</select></Field>
@@ -343,6 +363,7 @@ const ExpenseModal = ({ form, setForm, suppliers = [], categories, saving, error
         </div>
         {["GST_RECORDED", "REVERSE_CHARGE"].includes(gstModeOf(form)) ? (
           <div className="mt-3 grid gap-4 sm:grid-cols-3">
+            <Field label="Supplier's GSTIN"><input value={form.supplierGstin || ""} onChange={(e) => setForm("supplierGstin", e.target.value.toUpperCase())} maxLength={15} className="field" placeholder="Blank = the saved supplier's" /></Field>
             <Field label="Supplier's bill number"><input value={form.supplierInvoiceNumber || ""} onChange={(e) => setForm("supplierInvoiceNumber", e.target.value)} className="field" placeholder="As printed on their bill" /></Field>
             <Field label="Supplier's bill date"><input type="date" value={form.supplierInvoiceDate || ""} onChange={(e) => setForm("supplierInvoiceDate", e.target.value)} className="field" /></Field>
             <label className="mt-7 flex items-start gap-2 text-sm"><input type="checkbox" checked={form.itcEligible !== false} onChange={(e) => setForm("itcEligible", e.target.checked)} className="mt-1" /> <span>Claim input credit<span className="block text-xs" style={{ color: "var(--text-muted)" }}>Untick for blocked credit (food, motor cars, personal use: s.17(5)); the GST then stays in the cost.</span></span></label>
@@ -356,6 +377,100 @@ const ExpenseModal = ({ form, setForm, suppliers = [], categories, saving, error
     </form>
   </div>
 );
+
+// Photos are shrunk to at most 2000 px and sent as JPEG: smaller uploads, the same reading.
+const MAX_SIDE = 2000;
+const fileToBase64 = (blob) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onerror = () => reject(new Error("Could not read the file"));
+    reader.readAsDataURL(blob);
+  });
+const shrinkPhoto = (file) =>
+  new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, MAX_SIDE / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not prepare the photo"))), "image/jpeg", 0.85);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("This photo could not be opened. Try a JPG or PNG."));
+    };
+    img.src = url;
+  });
+
+const BillReader = ({ mergeForm, billFile, setBillFile, disabled }) => {
+  const [enabled, setEnabled] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState("");
+  const [result, setResult] = useState(null);
+  useEffect(() => {
+    readBillStatusRequest().then((data) => setEnabled(Boolean(data?.enabled))).catch(() => setEnabled(false));
+  }, []);
+
+  const pick = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setProblem("");
+    setResult(null);
+    setBusy(true);
+    try {
+      const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+      const blob = isPdf ? file : await shrinkPhoto(file);
+      if (blob.size > 5 * 1024 * 1024) throw new Error("The file is larger than 5 MB.");
+      const fileBase64 = await fileToBase64(blob);
+      const fileName = isPdf ? file.name : `${file.name.replace(/\.[^.]+$/, "") || "bill"}.jpg`;
+      const data = await readBillRequest({ fileBase64, fileName });
+      const filled = Object.fromEntries(Object.entries(data.fields).filter(([, value]) => value !== "" && value !== null && value !== undefined));
+      mergeForm({ ...filled, ...(data.fields.gstType === "NONE" ? { gstEnabled: false, gstRate: "" } : {}) });
+      setBillFile({ fileBase64, fileName });
+      setResult(data);
+    } catch (err) {
+      setProblem(err.response?.data?.message || err.message || "The bill could not be read.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (enabled === null) return null;
+  const off = !enabled || busy || disabled;
+  return (
+    <div className="mt-5 rounded-xl border border-dashed p-4" style={{ borderColor: "var(--panel-border)" }}>
+      <div className="flex flex-wrap items-center gap-3">
+        <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-semibold ${off ? "pointer-events-none opacity-50" : ""}`} style={{ borderColor: "var(--panel-border)" }}>
+          <Camera size={16} /> {busy ? "Reading the bill..." : billFile ? "Read another bill" : "Fill from a bill photo"}
+          <input type="file" accept="image/*,application/pdf" className="sr-only" disabled={off} onChange={pick} />
+        </label>
+        <p className="min-w-[200px] flex-1 text-xs" style={{ color: "var(--text-muted)" }}>
+          {enabled
+            ? "Take a photo or pick a PDF of the bill; the form is filled in for you to check. The bill is attached to the expense when you save."
+            : "Not switched on: the owner adds an Anthropic API key on the server to read bills from photos."}
+        </p>
+      </div>
+      {problem ? <p role="alert" className="mt-3 text-sm text-rose-600">{problem}</p> : null}
+      {result ? (
+        <div className="mt-3 text-sm">
+          <p className="font-medium text-emerald-700 dark:text-emerald-300">
+            Read{result.supplierName ? `, matched to supplier ${result.supplierName}` : ""}. Check every field before saving{result.read?.totalAmount ? `; the bill's total is ${money(result.read.totalAmount)}` : ""}.
+          </p>
+          {result.warnings?.length ? <ul className="mt-2 list-disc space-y-1 pl-5 text-amber-700 dark:text-amber-300">{result.warnings.map((w) => <li key={w}>{w}</li>)}</ul> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+};
 
 const gstModeOf = (form) => (form.gstType && form.gstType !== "NONE" ? form.gstType : form.gstEnabled ? "GST_RECORDED" : "NONE");
 

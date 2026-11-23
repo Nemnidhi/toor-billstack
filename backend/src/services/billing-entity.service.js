@@ -69,7 +69,8 @@ const resolveEntityUser = async (identity, requestedId) => {
   const rootId = String(homeBusiness?.billingParentId || homeBusiness?._id || "");
   const targetRootId = String(targetBusiness?.billingParentId || targetBusiness?._id || "");
 
-  if (targetBusiness && rootId && rootId === targetRootId && (identity.role === "owner" || identity.role === "admin")) {
+  const personalOfSomeoneElse = targetBusiness?.entityKind === "PERSONAL" && String(targetBusiness.ownerUserId || "") !== String(identity._id);
+  if (targetBusiness && !personalOfSomeoneElse && rootId && rootId === targetRootId && (identity.role === "owner" || identity.role === "admin")) {
     return {
       ...(identity.toObject ? identity.toObject() : identity),
       businessId: targetBusiness._id,
@@ -93,14 +94,17 @@ const listEntities = async (identity) => {
   ]);
 
   if (identity.role === "owner" || identity.role === "admin") {
-    const groupChildren = await Business.find({ billingParentId: rootId, isDisabled: { $ne: true } }).select("_id");
-    groupChildren.forEach((c) => candidateIds.add(c._id.toString()));
+    const groupChildren = await Business.find({ billingParentId: rootId, isDisabled: { $ne: true } }).select("_id entityKind ownerUserId");
+    // Personal books: only their owner and the people given access (memberships, above).
+    groupChildren
+      .filter((c) => c.entityKind !== "PERSONAL" || String(c.ownerUserId || "") === String(identity._id))
+      .forEach((c) => candidateIds.add(c._id.toString()));
   }
 
   const rows = await Business.find({
     _id: { $in: Array.from(candidateIds).map((id) => new mongoose.Types.ObjectId(id)) },
     isDisabled: { $ne: true },
-  }).select("name billingEntityCode billingParentId gstConfiguration createdAt").sort({ createdAt: 1, _id: 1 });
+  }).select("name billingEntityCode billingParentId gstConfiguration entityKind createdAt").sort({ createdAt: 1, _id: 1 });
 
   const picked = await pickCanonicalEntities(rows, { rootId, keep: [identity.businessId] });
   // Primary company first, then the rest by name.
@@ -112,6 +116,7 @@ const listEntities = async (identity) => {
     billingEntityCode: b.billingEntityCode,
     isPrimary: String(b._id) === String(rootId),
     gstEnabled: Boolean(b.gstConfiguration?.enabled),
+    kind: b.entityKind || "COMPANY",
   }));
 };
 
@@ -205,7 +210,7 @@ const grantAccess = async (identity, { userId, businessId, role, remove }) => {
     throw new AppError("The primary owner's entity access cannot be removed here", 400);
   }
   if (remove) return Membership.deleteOne({ userId, businessId });
-  if (!["admin", "accountant", "staff"].includes(role)) throw new AppError("Invalid entity role", 400);
+  if (!["admin", "accountant", "staff", "auditor"].includes(role)) throw new AppError("Invalid entity role", 400);
   return Membership.findOneAndUpdate(
     { userId, businessId },
     { $set: { role } },
@@ -213,4 +218,80 @@ const grantAccess = async (identity, { userId, businessId, role, remove }) => {
   );
 };
 
-module.exports = { resolveEntityUser, listEntities, ensureGoldhawk, grantAccess, requireGroupOwner, pickCanonicalEntities, canonicalGroupEntities, findGroupEntity };
+const GSTIN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+const slugPart = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "business";
+
+/**
+ * Another business with its own books in the group (client, 23 Nov 2026: "an option to create other
+ * businesses ... whose accounting is separate", "even a personal account" for the founder's credit
+ * card spending). Only the group owner creates them, and gives people access by hand.
+ * kind COMPANY: its own legal details, GST (with a GSTIN), invoice series, ledgers.
+ * kind PERSONAL: a person's own books, never GST, private to its owner and the people given access.
+ */
+const createEntity = async (identity, payload = {}) => {
+  const home = await requireGroupOwner(identity);
+  const name = String(payload.name || "").replace(/\s+/g, " ").trim().slice(0, 120);
+  if (name.length < 2) throw new AppError("Give the business a name", 400);
+  const kind = payload.kind === "PERSONAL" ? "PERSONAL" : "COMPANY";
+  const gstin = kind === "COMPANY" ? String(payload.gstin || "").trim().toUpperCase() : "";
+  if (gstin && !GSTIN.test(gstin)) throw new AppError("That GSTIN is not valid (15 characters, e.g. 23ABCDE1234F1Z5)", 400);
+  const prefix = String(payload.invoicePrefix || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || (kind === "PERSONAL" ? "PER" : slugPart(name).replace(/-/g, "").slice(0, 3).toUpperCase() || "INV");
+
+  const groupNames = (await canonicalGroupEntities(home._id)).map((row) => String(row.name).toLowerCase());
+  if (groupNames.includes(name.toLowerCase())) throw new AppError(`"${name}" already exists in this group`, 409);
+
+  const session = await mongoose.startSession();
+  let entity;
+  try {
+    await session.withTransaction(async () => {
+      [entity] = await Business.create([
+        {
+          name,
+          slug: `${slugPart(name)}-${home._id}-${new mongoose.Types.ObjectId().toString().slice(-6)}`,
+          billingParentId: home._id,
+          billingEntityCode: "",
+          entityKind: kind,
+          deploymentMode: "SELF_HOSTED",
+          ownerUserId: identity._id,
+          industry: home.industry,
+          onboardingCompleted: true,
+          businessProfile: { ...(home.businessProfile?.toObject ? home.businessProfile.toObject() : home.businessProfile || {}), gstRegistered: Boolean(gstin) },
+          gstTaxId: gstin,
+          gstConfiguration: gstin ? { enabled: true, gstin, stateCode: gstin.slice(0, 2), state: "" } : { enabled: false },
+          defaultTaxSettings: gstin ? home.defaultTaxSettings : { taxName: "", taxRate: 0, taxMode: "exclusive" },
+          invoiceNumbering: { prefix, format: `${prefix}-{YYYY}-{0001}`, nextSequence: 1 },
+        },
+      ], { session });
+      const Config = require("../models/BusinessModuleConfig");
+      const configs = await Config.find({ businessId: home._id }).session(session);
+      if (configs.length) {
+        await Config.insertMany(configs.map((c) => ({ businessId: entity._id, moduleKey: c.moduleKey, state: c.state, source: "SYSTEM", configuredBy: identity._id })), { session });
+      }
+      await Membership.updateOne({ userId: identity._id, businessId: entity._id }, { $setOnInsert: { role: "admin" } }, { upsert: true, session });
+    });
+    return entity;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/** Rename, or archive (hide; its books stay as they are) a business the owner added. */
+const updateEntity = async (identity, entityId, payload = {}) => {
+  const home = await requireGroupOwner(identity);
+  if (!mongoose.isValidObjectId(entityId)) throw new AppError("Invalid business", 400);
+  const entity = await Business.findOne({ _id: entityId, billingParentId: home._id });
+  if (!entity) throw new AppError("Business not found in this group", 404);
+  if (payload.name !== undefined) {
+    const name = String(payload.name || "").replace(/\s+/g, " ").trim().slice(0, 120);
+    if (name.length < 2) throw new AppError("Give the business a name", 400);
+    entity.name = name;
+  }
+  if (payload.archived !== undefined) {
+    if (entity.billingEntityCode === "GOLDHAWK") throw new AppError("Goldhawk is part of the CRM link and cannot be archived here", 400);
+    entity.isDisabled = Boolean(payload.archived);
+  }
+  await entity.save();
+  return entity;
+};
+
+module.exports = { resolveEntityUser, listEntities, ensureGoldhawk, createEntity, updateEntity, grantAccess, requireGroupOwner, pickCanonicalEntities, canonicalGroupEntities, findGroupEntity };

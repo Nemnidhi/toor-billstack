@@ -134,6 +134,7 @@ const BankAccountsTab = ({ selectedEntity }) => {
                 <option value="CURRENT">Current Account</option>
                 <option value="SAVINGS">Savings Account</option>
                 <option value="OVERDRAFT">Overdraft (OD)</option>
+                <option value="CREDIT_CARD">Credit card</option>
               </select>
             </div>
             <div>
