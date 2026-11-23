@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Info, Loader2, XCircle } from "lucide-react";
-import { gstr1ExcelRequest, gstr1JsonRequest, gstr1Request } from "../auth/api";
+import { gstr1ExcelRequest, gstr1JsonCheckRequest, gstr1JsonRequest, gstr1Request } from "../auth/api";
 
 const money = (value) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(value || 0));
 const date = (value) => (value ? new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—");
@@ -81,6 +81,7 @@ const Gstr1Panel = () => {
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState("");
+  const [jsonCheck, setJsonCheck] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -98,6 +99,10 @@ const Gstr1Panel = () => {
   const downloadJson = async () => {
     setDownloading(true); setError("");
     try {
+      // Checked against the portal's upload rules first; with errors it asks before downloading.
+      const check = await gstr1JsonCheckRequest({ month: selection.month });
+      setJsonCheck(check);
+      if (check.errors.length && !window.confirm(`${check.errors.length} problem(s) the GST portal would reject (listed on the page). Download anyway?`)) return;
       const blob = await gstr1JsonRequest({ month: selection.month });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -205,6 +210,15 @@ const Gstr1Panel = () => {
 
       {data && !loading ? <p className="text-sm font-semibold">Showing: {data.period?.title}{data.period?.from && !/^\d/.test(data.period.title || "") ? <span className="font-normal" style={{ color: "var(--text-muted)" }}> · {date(data.period.from)} to {date(data.period.to)}</span> : null}</p> : null}
       {error ? <p role="alert" className="alert alert-error">{error}</p> : null}
+      {jsonCheck ? (
+        <div className={`alert ${jsonCheck.errors.length ? "alert-error" : "alert-success"}`}>
+          <div>
+            <p className="font-semibold">{jsonCheck.errors.length ? `Portal JSON: ${jsonCheck.errors.length} problem(s) the portal would reject` : "Portal JSON passes the portal's upload rules"}{jsonCheck.warnings.length ? ` · ${jsonCheck.warnings.length} to look at` : ""}</p>
+            <ul className="mt-1 list-disc pl-5 text-xs">{[...jsonCheck.errors, ...jsonCheck.warnings].slice(0, 30).map((row, index) => <li key={index}>{row.level === "warning" ? "Check: " : ""}{row.where}: {row.message}</li>)}</ul>
+            <p className="mt-1 text-xs opacity-80">Final check: open the file in the latest GST offline tool before uploading.</p>
+          </div>
+        </div>
+      ) : null}
       {loading ? <p role="status" className="flex items-center gap-2 text-sm" style={{ color: "var(--text-muted)" }}><Loader2 size={16} className="animate-spin" /> Preparing GSTR-1…</p> : null}
 
       {data && !loading ? (

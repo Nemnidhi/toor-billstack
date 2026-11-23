@@ -116,18 +116,19 @@ const fetchRazorpaySubscription = async (subscriptionId) => {
   return razorpay.subscriptions.fetch(subscriptionId);
 };
 
+// Constant-time compare of a hex HMAC; false (never a throw) when the secret is not set.
+const hmacMatches = (secret, data, signature) => {
+  if (!secret || !signature) return false;
+  const expected = Buffer.from(crypto.createHmac("sha256", secret).update(data).digest("hex"));
+  const given = Buffer.from(String(signature));
+  return expected.length === given.length && crypto.timingSafeEqual(expected, given);
+};
+
 const verifyRazorpaySubscriptionPayment = ({
   razorpayPaymentId,
   razorpaySubscriptionId,
   razorpaySignature,
-}) => {
-  const generatedSignature = crypto
-    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-    .update(`${razorpayPaymentId}|${razorpaySubscriptionId}`)
-    .digest("hex");
-
-  return generatedSignature === razorpaySignature;
-};
+}) => hmacMatches(process.env.RAZORPAY_KEY_SECRET, `${razorpayPaymentId}|${razorpaySubscriptionId}`, razorpaySignature);
 
 const verifyRazorpayOrderPayment = ({
   razorpayOrderId,
@@ -138,22 +139,10 @@ const verifyRazorpayOrderPayment = ({
     throw new Error("Razorpay is not configured");
   }
 
-  const generatedSignature = crypto
-    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-    .update(`${razorpayOrderId}|${razorpayPaymentId}`)
-    .digest("hex");
-
-  return generatedSignature === razorpaySignature;
+  return hmacMatches(process.env.RAZORPAY_KEY_SECRET, `${razorpayOrderId}|${razorpayPaymentId}`, razorpaySignature);
 };
 
-const verifyRazorpayWebhookSignature = ({ rawBody, signature }) => {
-  const expectedSignature = crypto
-    .createHmac("sha256", process.env.RAZORPAY_WEBHOOK_SECRET)
-    .update(rawBody)
-    .digest("hex");
-
-  return expectedSignature === signature;
-};
+const verifyRazorpayWebhookSignature = ({ rawBody, signature }) => hmacMatches(process.env.RAZORPAY_WEBHOOK_SECRET, rawBody, signature);
 
 module.exports = {
   createRazorpaySubscription,

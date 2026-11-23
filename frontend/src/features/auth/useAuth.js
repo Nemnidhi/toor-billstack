@@ -3,6 +3,7 @@ import {
   currentSessionRequest,
   googleAuthRequest,
   loginRequest,
+  loginTwoFactorRequest,
   logoutRequest,
   registerRequest,
 } from "./api";
@@ -42,8 +43,11 @@ export const useAuth = () => {
     navigate(postAuthRoute(data.business));
   };
 
+  // With two-step sign-in on, the first step answers { twoFactorRequired, challengeToken } and no
+  // session: the caller asks for the code and calls completeTwoFactor.
   const login = async (payload) => {
     const data = await loginRequest(payload);
+    if (data?.twoFactorRequired) return data;
     setSession(data);
     uiStore.getState().pushToast({
       tone: "success",
@@ -51,10 +55,25 @@ export const useAuth = () => {
       message: "You are signed in to BillStack.",
     });
     navigate(postAuthRoute(data.business));
+    return null;
+  };
+
+  const completeTwoFactor = async ({ challengeToken, code }) => {
+    const data = await loginTwoFactorRequest({ challengeToken, code });
+    setSession(data);
+    uiStore.getState().pushToast({
+      tone: data.recoveryLeft !== undefined ? "info" : "success",
+      title: "Welcome back",
+      message: data.recoveryLeft !== undefined
+        ? `Signed in with a recovery code. ${data.recoveryLeft} left - switch two-step sign-in off and on again in Settings for a fresh set.`
+        : "You are signed in to BillStack.",
+    });
+    navigate(postAuthRoute(data.business));
   };
 
   const googleAuth = async (payload) => {
     const data = await googleAuthRequest(payload);
+    if (data?.twoFactorRequired) return data;
     setSession(data);
     uiStore.getState().pushToast({
       tone: "success",
@@ -80,6 +99,7 @@ export const useAuth = () => {
   return {
     accessToken,
     business,
+    completeTwoFactor,
     googleAuth,
     login,
     logout,

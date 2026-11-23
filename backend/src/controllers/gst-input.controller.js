@@ -33,8 +33,14 @@ const gstr1Json = asyncHandler(async (req, res) => {
   res.send(JSON.stringify(json));
 });
 
+// The JSON checked against the portal's upload rules before it is downloaded.
+const gstr1JsonCheck = asyncHandler(async (req, res) => {
+  const { checks, fileName } = await gstInput.gstr1Json({ businessId: req.tenant.businessId, month: monthOf(req) });
+  res.json({ data: { fileName, errors: checks.filter((c) => c.level === "error"), warnings: checks.filter((c) => c.level === "warning") } });
+});
+
 const rcmDocuments = asyncHandler(async (req, res) => {
   res.json({ data: await gstInput.rcmDocuments({ businessId: req.tenant.businessId, expenseId: req.params.expenseId }) });
 });
 
-module.exports = { itcRegister, import2b, match2b, setImsAction, gstr3b, gstr1Json, rcmDocuments };
+module.exports = { itcRegister, import2b, match2b, setImsAction, gstr3b, gstr1Json, gstr1JsonCheck, rcmDocuments };

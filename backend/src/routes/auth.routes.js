@@ -4,6 +4,11 @@ const {
   forgotPassword,
   getMe,
   login,
+  loginTwoFactor,
+  twoFactorDisable,
+  twoFactorEnable,
+  twoFactorSetup,
+  twoFactorStatus,
   googleAuth,
   logout,
   refresh,
@@ -33,10 +38,16 @@ router.get("/signup-status", signupStatus);
 router.post("/register", registrationRateLimiter, validate(registerValidator), register);
 router.post("/login", authRateLimiter, validate(loginValidator), login);
 router.post("/google", authRateLimiter, googleAuth);
+// Second step for users with two-step sign-in on (the code from their authenticator app).
+router.post("/login/2fa", authRateLimiter, loginTwoFactor);
 router.post("/forgot-password", passwordRecoveryRateLimiter, validate(forgotPasswordValidator), forgotPassword);
 router.post("/reset-password", passwordRecoveryRateLimiter, validate(resetPasswordValidator), resetPassword);
 router.post("/refresh", tokenRateLimiter, refresh);
 router.post("/logout", logout);
 router.get("/me", authMiddleware, tenantMiddleware, getMe);
+router.get("/2fa", authMiddleware, twoFactorStatus);
+router.post("/2fa/setup", authMiddleware, twoFactorSetup);
+router.post("/2fa/enable", authRateLimiter, authMiddleware, twoFactorEnable);
+router.post("/2fa/disable", authRateLimiter, authMiddleware, twoFactorDisable);
 
 module.exports = router;

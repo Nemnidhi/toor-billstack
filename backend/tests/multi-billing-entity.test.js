@@ -33,14 +33,19 @@ test("home roles survive; cross-entity roles require an explicit membership and 
   assert.equal(await resolveEntityUser(identity), identity);
   await assert.rejects(resolveEntityUser(identity, "invalid"), /Invalid billing entity/);
   const original = Membership.findOne;
+  // Owners / admins may also enter a sister company of their own group (looked up in the database);
+  // here the target is in no group, so without a membership the answer is no.
+  const Business = require("../src/models/Business");
+  const originalFindById = Business.findById;
   try {
+    Business.findById = async () => null;
     Membership.findOne = async () => null;
     await assert.rejects(resolveEntityUser(identity, "cccccccccccccccccccccccc"), /access denied/);
     Membership.findOne = async () => ({ businessId: "cccccccccccccccccccccccc", role: "accountant" });
     const scoped = await resolveEntityUser(identity, "cccccccccccccccccccccccc");
     assert.equal(scoped.role, "accountant"); assert.equal(scoped.permissions.canManageHR, false);
     assert.equal(identity.role, "owner"); assert.equal(identity.businessId, "bbbbbbbbbbbbbbbbbbbbbbbb");
-  } finally { Membership.findOne = original; }
+  } finally { Membership.findOne = original; Business.findById = originalFindById; }
 });
 
 test("seller captures GSTIN stored in GST configuration and prefers legacy invoice tax evidence", () => {

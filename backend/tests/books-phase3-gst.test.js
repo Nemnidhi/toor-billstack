@@ -213,7 +213,8 @@ test("credit set-off follows the law: no CGST against SGST", () => {
 test("GSTR-1 JSON carries B2B invoices by recipient and the HSN summary", async () => {
   const { business } = await setup();
   const invoice = await b2bInvoice({ business, taxable: 10000 });
-  const { json, fileName } = await gstIn.gstr1Json({ businessId: business._id, month: "2026-10" });
+  const { json, fileName, checks } = await gstIn.gstr1Json({ businessId: business._id, month: "2026-10" });
+  assert.deepEqual(checks.filter((c) => c.level === "error"), [], "passes the portal upload rules");
   assert.equal(json.fp, "102026");
   assert.equal(json.gstin, "23CGZPB7175E1Z5");
   assert.equal(json.b2b[0].ctin, "23AABCT1234C1Z5");

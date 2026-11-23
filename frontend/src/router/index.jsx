@@ -30,6 +30,7 @@ const AccountingReportsPage = lazy(() => import("../features/accounting/pages/Ac
 const SalesLifecyclePage = lazy(() => import("../features/dashboard/pages/SalesLifecyclePage"));
 const SubscriptionPage = lazy(() => import("../features/dashboard/pages/SubscriptionPage"));
 const SuppliersPage = lazy(() => import("../features/dashboard/pages/SuppliersPage"));
+const SecurityPage = lazy(() => import("../features/dashboard/pages/SecurityPage"));
 const TeamPage = lazy(() => import("../features/dashboard/pages/TeamPage"));
 const WorkflowPage = lazy(() => import("../features/dashboard/pages/WorkflowPage"));
 const EmployeesPage = lazy(() => import("../features/hr/pages/EmployeesPage"));
@@ -189,6 +190,10 @@ export const router = createBrowserRouter([
               {
                 path: "approvals",
                 element: lazyElement(<WorkflowPage />, "Loading approvals"),
+              },
+              {
+                path: "security",
+                element: lazyElement(<SecurityPage />, "Loading sign-in security"),
               },
               {
                 path: "team",

@@ -31,5 +31,11 @@ router.put(
   updateTeamMember
 );
 router.delete("/:userId", validateObjectIdParam("userId"), permit("owner", "admin"), deleteTeamMember);
+// Someone lost their phone and recovery codes: switch their two-step sign-in off so they can set it up again.
+router.post("/:userId/two-factor/reset", validateObjectIdParam("userId"), permit("owner", "admin"), require("../utils/asyncHandler")(async (req, res) => {
+  const data = await require("../services/two-factor.service").resetForUser({ actor: req.user, userId: req.params.userId });
+  await require("../services/audit.service").writeAuditLog({ req, businessId: req.user.businessId, actor: { type: "USER", userId: req.user._id, email: req.user.email, role: req.user.role }, action: "TWO_FACTOR_RESET", entityType: "USER", entityId: req.params.userId, metadata: {} });
+  res.json({ data });
+}));
 
 module.exports = router;

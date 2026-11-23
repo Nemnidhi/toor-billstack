@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, LogOut, Menu, Moon, Sun } from "lucide-react";
+import { ChevronDown, LogOut, Menu, Moon, ShieldCheck, Sun } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import BillingEntitySwitcher from "../../features/workspace/BillingEntitySwitcher";
 import { useAuth } from "../../features/auth/useAuth";
 import { uiStore } from "../../store/uiStore";
@@ -15,6 +16,7 @@ const initialsFor = (name = "") =>
 const UserMenu = ({ user, onLogout }) => {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!open) return undefined;
@@ -51,6 +53,9 @@ const UserMenu = ({ user, onLogout }) => {
             <p className="truncate text-xs" style={{ color: "var(--text-muted)" }}>{user?.email || user?.role}</p>
           </div>
           <div className="my-1 border-t" style={{ borderColor: "var(--panel-border)" }} />
+          <button type="button" role="menuitem" onClick={() => { setOpen(false); navigate("/dashboard/security"); }} className="topbar-menu-item">
+            <ShieldCheck size={16} /> Sign-in security{user?.twoFactorEnabled ? "" : " (two-step off)"}
+          </button>
           <button type="button" role="menuitem" onClick={onLogout} className="topbar-menu-item text-rose-600">
             <LogOut size={16} /> Log out
           </button>

@@ -1,6 +1,8 @@
 const mongoose = require("mongoose");
 const validId = (value) => mongoose.Types.ObjectId.isValid(value);
-const paymentMethods = ["CASH", "BANK_TRANSFER", "CHEQUE", "UPI", "CARD", "OTHER"];
+// RAZORPAY: money a customer paid through Razorpay outside a BillStack link. It goes to "Razorpay -
+// Settlements Due" (1030), not the bank, because it reaches the bank inside a Razorpay settlement.
+const paymentMethods = ["CASH", "BANK_TRANSFER", "CHEQUE", "UPI", "CARD", "RAZORPAY", "OTHER"];
 const paymentCreateValidator = (body) => {
   const errors = {};
   const direction = String(body.direction || "").toUpperCase();
@@ -12,6 +14,7 @@ const paymentCreateValidator = (body) => {
   if (direction === "RECEIVED" && !body.customerId) errors.customerId = "A received payment requires a customer";
   if (direction === "PAID" && !body.supplierId) errors.supplierId = "A paid payment requires a supplier";
   if (body.paymentMethod && !paymentMethods.includes(String(body.paymentMethod).toUpperCase())) errors.paymentMethod = "Payment method is invalid";
+  else if (String(body.paymentMethod || "").toUpperCase() === "RAZORPAY" && direction !== "RECEIVED") errors.paymentMethod = "Razorpay is only for money received from a customer";
   if (body.currency && !/^[A-Za-z]{3}$/.test(body.currency)) errors.currency = "Currency must be a three-letter ISO code";
   if (body.paymentDate && Number.isNaN(Date.parse(body.paymentDate))) errors.paymentDate = "Payment date is invalid";
   if (body.status && String(body.status).toUpperCase() !== "POSTED") errors.status = "New payments can only be POSTED";

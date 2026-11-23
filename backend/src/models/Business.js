@@ -205,6 +205,18 @@ const businessSchema = new mongoose.Schema(
       lockedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
       lockedAt: { type: Date, default: null },
     },
+    // Customer payments online: the business's own Razorpay account (key secret and webhook secret
+    // encrypted with BILLSTACK_DATA_KEY). Each invoice can then carry a payment link.
+    onlinePayments: {
+      enabled: { type: Boolean, default: false },
+      provider: { type: String, enum: ["RAZORPAY"], default: "RAZORPAY" },
+      keyId: { type: String, trim: true, default: "" },
+      keySecretSealed: { type: String, default: "", select: false },
+      webhookSecretSealed: { type: String, default: "", select: false },
+      linkExpiryDays: { type: Number, default: 30, min: 0, max: 180 },
+      updatedAt: { type: Date, default: null },
+      updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    },
     bankDetails: {
       type: bankDetailsSchema,
       default: () => ({}),

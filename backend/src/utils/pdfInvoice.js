@@ -130,8 +130,11 @@ const buildInvoicePdfDefinition = ({ invoice, business = {} }) => {
   const snapshot = invoice.gstSnapshot || {};
   const customer = invoice.customerDetails || {};
 
+  // An issued invoice prints the seller as it was when issued (sellerSnapshot); the company's current
+  // profile only fills what an old invoice never recorded.
+  const seller = invoice.sellerSnapshot || {};
   // Standardize Business Name: TOOR -> THE OFFICE ON RENT
-  let businessName = compact(business.name || invoice.sellerSnapshot?.name || "THE OFFICE ON RENT");
+  let businessName = compact(seller.name || business.name || "THE OFFICE ON RENT");
   if (businessName.toUpperCase() === "TOOR" || invoice.billingEntityCode === "TOOR" || invoice.sellerSnapshot?.billingEntityCode === "TOOR") {
     businessName = "THE OFFICE ON RENT";
   }
@@ -140,36 +143,36 @@ const buildInvoicePdfDefinition = ({ invoice, business = {} }) => {
   const isToorEntity = businessName.toUpperCase().includes("OFFICE ON RENT") || invoice.billingEntityCode === "TOOR" || invoice.sellerSnapshot?.billingEntityCode === "TOOR";
   const businessGstin = compact(
     snapshot.gstin ||
+    seller.gstTaxId ||
+    invoice.businessDetails?.gstNumber ||
     business.gstTaxId ||
     business.gstConfiguration?.gstin ||
-    invoice.businessDetails?.gstNumber ||
-    invoice.sellerSnapshot?.gstTaxId ||
     (isToorEntity ? "23CGZPB7175E1Z5" : "")
   );
 
   const businessAddress = compact(
+    seller.address ||
     business.address ||
-    invoice.sellerSnapshot?.address ||
     (isToorEntity ? "Gravity Mall, Vijay Nagar, Indore, Madhya Pradesh - 452010" : "")
   );
 
   const businessPhone = compact(
+    seller.phone ||
     business.phone ||
-    invoice.sellerSnapshot?.phone ||
     (isToorEntity ? "83495-23485" : "")
   );
 
   const businessEmail = compact(
+    seller.email ||
+    seller.billingEmail ||
     business.email ||
     business.billingEmail ||
-    invoice.sellerSnapshot?.email ||
-    invoice.sellerSnapshot?.billingEmail ||
     (isToorEntity ? "info@theofficeonrent.com" : "")
   );
 
   // Logo & Signature
-  const logoUrl = business.logoUrl || invoice.sellerSnapshot?.logoUrl || (isToorEntity ? "/uploads/logos/6ab5011de114ca233484c92e-1791194584876-d1fb73ff55a65b7590585ad4.png" : "");
-  const signatureUrl = business.signatureUrl || invoice.sellerSnapshot?.signatureUrl || "";
+  const logoUrl = seller.logoUrl || business.logoUrl || (isToorEntity ? "/uploads/logos/6ab5011de114ca233484c92e-1791194584876-d1fb73ff55a65b7590585ad4.png" : "");
+  const signatureUrl = seller.signatureUrl || business.signatureUrl || "";
   const logo = loadUploadedImage(logoUrl);
   const signature = loadUploadedImage(signatureUrl);
 
@@ -178,7 +181,7 @@ const buildInvoicePdfDefinition = ({ invoice, business = {} }) => {
   const customerGstinDisplay = rawCustomerGstin || "-";
 
   // State resolution
-  const sellerStateCode = compact(business.gstConfiguration?.stateCode || businessGstin?.slice(0, 2) || (isToorEntity ? "23" : ""));
+  const sellerStateCode = compact(businessGstin?.slice(0, 2) || business.gstConfiguration?.stateCode || (isToorEntity ? "23" : ""));
   const placeOfSupply = compact(
     snapshot.placeOfSupply ||
     states[snapshot.placeOfSupplyCode] ||

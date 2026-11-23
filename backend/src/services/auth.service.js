@@ -141,6 +141,7 @@ const buildAuthPayload = async ({ user, business, accessToken }) => {
     businessId: user.businessId,
     authProvider: user.authProvider,
     googleLinked: Boolean(user.googleSubject && user.googleEmailVerified),
+    twoFactorEnabled: Boolean(user.twoFactor?.enabled),
   },
   business: serializeBusinessWithPlan(business, subscription),
 });

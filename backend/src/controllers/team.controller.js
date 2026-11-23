@@ -44,7 +44,7 @@ const listTeamMembers = asyncHandler(async (req, res) => {
   }
 
   const [items, total] = await Promise.all([
-    User.find(filters).select("name email role permissions.grants isActive lastLoginAt passwordChangedAt lockedUntil createdAt updatedAt").sort(sort).skip(skip).limit(limit),
+    User.find(filters).select("name email role permissions.grants isActive lastLoginAt passwordChangedAt lockedUntil twoFactor.enabled createdAt updatedAt").sort(sort).skip(skip).limit(limit),
     User.countDocuments(filters),
   ]);
 

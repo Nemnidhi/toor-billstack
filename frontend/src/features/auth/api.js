@@ -22,6 +22,14 @@ export const googleAuthRequest = async (payload) => {
   return response.data.data;
 };
 
+// Two-step sign-in (authenticator app).
+export const loginTwoFactorRequest = async (payload) => (await api.post("/auth/login/2fa", payload)).data.data;
+export const twoFactorStatusRequest = async () => (await api.get("/auth/2fa")).data.data;
+export const twoFactorSetupRequest = async () => (await api.post("/auth/2fa/setup", {})).data.data;
+export const twoFactorEnableRequest = async (code) => (await api.post("/auth/2fa/enable", { code })).data.data;
+export const twoFactorDisableRequest = async (code) => (await api.post("/auth/2fa/disable", { code })).data.data;
+export const resetMemberTwoFactorRequest = async (userId) => (await api.post(`/team/${userId}/two-factor/reset`, {})).data.data;
+
 export const forgotPasswordRequest = async (payload) => {
   const response = await api.post("/auth/forgot-password", payload);
   return response.data;
@@ -757,9 +765,22 @@ export const gstr1ExcelRequest = async (period) => {
 
 // ---- GST buying side and GSTR-3B (books phase 3)
 export const gstr1JsonRequest = async (params) => (await api.get("/gst/gstr1/json", { params, responseType: "blob" })).data;
+export const gstr1JsonCheckRequest = async (params) => (await api.get("/gst/gstr1/json/check", { params })).data.data;
 export const itcRegisterRequest = async (params) => (await api.get("/gst/itc", { params })).data.data;
 export const import2bRequest = async (payload, params) => (await api.post("/gst/2b/import", payload, { params })).data.data;
 export const match2bRequest = async (params) => (await api.get("/gst/2b/match", { params })).data.data;
 export const setImsActionRequest = async (rowId, payload, params) => (await api.post(`/gst/2b/rows/${rowId}/ims`, payload, { params })).data.data;
 export const gstr3bRequest = async (params) => (await api.get("/gst/gstr3b", { params })).data.data;
 export const rcmDocumentsRequest = async (expenseId) => (await api.get(`/gst/rcm/${expenseId}/documents`)).data.data;
+
+// Customer payments online (Razorpay payment links with the business's own keys)
+export const onlinePaymentSettingsRequest = async () => (await api.get("/online-payments/settings")).data.data;
+export const saveOnlinePaymentSettingsRequest = async (payload) => (await api.put("/online-payments/settings", payload)).data.data;
+export const invoicePaymentLinksRequest = async (invoiceId) => (await api.get(`/online-payments/invoices/${invoiceId}`)).data.data;
+export const makeInvoicePaymentLinkRequest = async (invoiceId) => (await api.post(`/online-payments/invoices/${invoiceId}/link`)).data.data;
+export const cancelInvoicePaymentLinkRequest = async (invoiceId) => (await api.post(`/online-payments/invoices/${invoiceId}/link/cancel`)).data.data;
+export const recordInvoicePaymentLinkRequest = async (invoiceId) => (await api.post(`/online-payments/invoices/${invoiceId}/link/record`)).data.data;
+export const recordInvoiceRefundRequest = async (invoiceId, refundId, how) => (await api.post(`/online-payments/invoices/${invoiceId}/refunds/${encodeURIComponent(refundId)}/record`, { how })).data.data;
+export const onlinePaymentSettlementsRequest = async () => (await api.get("/online-payments/settlements")).data.data;
+export const decideOnlinePaymentSettlementRequest = async (id, action) => (await api.post(`/online-payments/settlements/${id}/decide`, { action })).data.data;
+export const communicationSettingsRequest = async () => (await api.get("/communications/settings")).data.data;

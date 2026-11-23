@@ -18,7 +18,10 @@ const LoginPage = () => {
   const [serverError, setServerError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [retryAfter, setRetryAfter] = useState(0);
-  const { googleAuth, login } = useAuth();
+  // Two-step sign-in: after the password (or Google) the server asks for a code from the app.
+  const [challenge, setChallenge] = useState(null);
+  const [code, setCode] = useState("");
+  const { completeTwoFactor, googleAuth, login } = useAuth();
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
   const signupOpen = useSignupOpen(false);
 
@@ -48,7 +51,8 @@ const LoginPage = () => {
     setErrors({});
     setIsSubmitting(true);
     try {
-      await googleAuth(payload);
+      const pending = await googleAuth(payload);
+      if (pending?.twoFactorRequired) setChallenge(pending.challengeToken);
     } catch (error) {
       captureRetryAfter(error);
       setServerError(error.response?.data?.message || "Google login failed");
@@ -65,7 +69,8 @@ const LoginPage = () => {
     setIsSubmitting(true);
 
     try {
-      await login(form);
+      const pending = await login(form);
+      if (pending?.twoFactorRequired) setChallenge(pending.challengeToken);
     } catch (error) {
       captureRetryAfter(error);
       setErrors(error.response?.data?.errors || {});
@@ -74,6 +79,41 @@ const LoginPage = () => {
       setIsSubmitting(false);
     }
   };
+
+  const handleCode = async (event) => {
+    event.preventDefault();
+    if (isSubmitting) return;
+    setServerError("");
+    setIsSubmitting(true);
+    try {
+      await completeTwoFactor({ challengeToken: challenge, code: code.trim() });
+    } catch (error) {
+      captureRetryAfter(error);
+      if (error.response?.status === 401 && /expired/i.test(error.response?.data?.message || "")) {
+        setChallenge(null);
+        setCode("");
+      }
+      setServerError(error.response?.data?.message || "That code is not right");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (challenge) {
+    return (
+      <AuthCard title="Two-step sign-in" subtitle="Enter the 6-digit code from your authenticator app.">
+        {serverError ? <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-sm text-rose-700">{serverError}{retryAfter ? ` Try again in ${Math.floor(retryAfter / 60)}:${String(retryAfter % 60).padStart(2, "0")}.` : ""}</div> : null}
+        <form className="space-y-4" onSubmit={handleCode}>
+          <FormField label="Code" name="code" inputMode="text" autoComplete="one-time-code" placeholder="123456" value={code} onChange={(event) => setCode(event.target.value)} autoFocus required />
+          <p className="text-xs text-slate-500 dark:text-slate-400">Lost your phone? Type one of your recovery codes (like ABCDE-12345) instead. Each one works once.</p>
+          <button type="submit" disabled={isSubmitting || retryAfter > 0 || !code.trim()} className="auth-primary w-full rounded-2xl px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-70">
+            {isSubmitting ? <LoadingIndicator compact label="Checking..." className="text-white [&>svg]:text-white" /> : "Verify and sign in"}
+          </button>
+          <button type="button" onClick={() => { setChallenge(null); setCode(""); setServerError(""); }} className="w-full text-sm font-medium text-brand-700 dark:text-brand-300">Back to sign in</button>
+        </form>
+      </AuthCard>
+    );
+  }
 
   return (
     <AuthCard

@@ -9,6 +9,7 @@ const controller = require("../controllers/communication.controller");
 
 const router = express.Router();
 router.post("/webhooks/whatsapp/status", controller.whatsappProviderWebhook);
+router.post("/webhooks/whatsapp-app/status", controller.whatsappAppStatusWebhook);
 
 router.use(auth, tenant, requireActiveSubscription(), requireModule("communications"));
 
@@ -21,7 +22,8 @@ router.post("/rules", permit("owner", "admin", "accountant"), controller.createR
 router.get("/scheduled", controller.scheduled);
 router.get("/deliveries", controller.deliveries);
 router.post("/process-due", permit("owner", "admin"), controller.processDue);
-router.post("/webhooks/whatsapp/status/internal", controller.webhookStatus);
+// Correcting a message's delivery status by hand: owner / admin only.
+router.post("/webhooks/whatsapp/status/internal", permit("owner", "admin"), controller.webhookStatus);
 router.post("/invoices/:invoiceId/send", validateObjectIdParam("invoiceId"), permit("owner", "admin", "staff", "accountant"), controller.sendInvoice);
 router.post("/invoices/:invoiceId/reminders", validateObjectIdParam("invoiceId"), permit("owner", "admin", "staff", "accountant"), controller.scheduleInvoiceReminder);
 router.post("/quotes/:quoteId/send", validateObjectIdParam("quoteId"), permit("owner", "admin", "staff", "accountant"), controller.sendQuote);

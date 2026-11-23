@@ -53,6 +53,7 @@ const buildPresetConfiguration = (presetConfig = {}) =>
     moduleKeys: Array.isArray(moduleKeys) ? moduleKeys : [],
   }));
 
+let superAdminLastStep = -1;
 const superAdminLogin = asyncHandler(async (req, res) => {
   const email = (req.body.email || "").trim().toLowerCase();
   const password = req.body.password || "";
@@ -75,6 +76,15 @@ const superAdminLogin = asyncHandler(async (req, res) => {
 
   if (!emailMatch || !passMatch) {
     throw new AppError("Invalid super admin credentials", 401);
+  }
+
+  // Two-step: with SUPER_ADMIN_TOTP_SECRET set (scripts/make-totp-secret.js), the authenticator code
+  // is required too, and each code works once.
+  const totpSecret = (process.env.SUPER_ADMIN_TOTP_SECRET || "").trim();
+  if (totpSecret) {
+    const step = require("../utils/totp").verifyCode(totpSecret, req.body.code, { afterStep: superAdminLastStep });
+    if (step === null) throw new AppError(req.body.code ? "That code is not right" : "Enter the code from your authenticator app", 401);
+    superAdminLastStep = step;
   }
 
   const accessToken = signSuperAdminToken({

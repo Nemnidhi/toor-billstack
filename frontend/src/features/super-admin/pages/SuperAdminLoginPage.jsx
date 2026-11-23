@@ -8,6 +8,7 @@ import { superAdminStore } from "../../../store/superAdminStore";
 const initialForm = {
   email: "",
   password: "",
+  code: "",
 };
 
 const SuperAdminLoginPage = () => {
@@ -34,6 +35,7 @@ const SuperAdminLoginPage = () => {
       const data = await superAdminLoginRequest({
         email: form.email.trim(),
         password: form.password,
+        ...(form.code.trim() ? { code: form.code.trim() } : {}),
       });
       setSession(data);
       navigate("/super-admin");
@@ -68,6 +70,16 @@ const SuperAdminLoginPage = () => {
           value={form.password}
           onChange={handleChange}
           error={errors.password}
+        />
+        <FormField
+          label="Code from the authenticator app (when the server has one set)"
+          name="code"
+          placeholder="123456"
+          value={form.code}
+          onChange={handleChange}
+          autoComplete="one-time-code"
+          inputMode="numeric"
+          maxLength={6}
         />
         {serverError ? <p className="text-sm text-rose-600">{serverError}</p> : null}
         <button

@@ -34,7 +34,7 @@ const summary = asyncHandler(async (req, res) => {
     MessageDelivery.countDocuments({ businessId, status: { $in: ["DELIVERED", "READ"] } }),
     ScheduledReminder.find({ businessId, status: "SCHEDULED" }).populate("customerId", "name phone email").populate("invoiceId", "invoiceNumber dueDate balanceDue").sort("scheduledFor").limit(8),
   ]);
-  res.json({ data: { messagesSent, scheduledReminders, failedMessages, deliveredMessages, upcoming, providerStatus: { whatsapp: getWhatsAppProviderStatus(), email: { configured: Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) }, sms: { configured: false } } } });
+  res.json({ data: { messagesSent, scheduledReminders, failedMessages, deliveredMessages, upcoming, providerStatus: { whatsapp: getWhatsAppProviderStatus(req.tenant.businessId), email: { configured: Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) }, sms: { configured: false } } } });
 });
 
 const templates = asyncHandler(async (req, res) => {
@@ -147,6 +147,16 @@ const webhookStatus = asyncHandler(async (req, res) => {
   res.json({ data: row });
 });
 
+// The WhatsApp app telling BillStack how a message went: signed with the shared secret.
+const whatsappAppStatusWebhook = asyncHandler(async (req, res) => {
+  const { verifyWhatsAppAppSignature } = require("../services/whatsapp-app.service");
+  const rawBody = req.rawBody || "";
+  if (!verifyWhatsAppAppSignature({ timestamp: req.get("x-oor-timestamp"), rawBody, signature: req.get("x-oor-signature") || "" })) throw new AppError("Invalid signature", 401);
+  const { updateWhatsAppAppDeliveryStatus } = require("../services/communication.service");
+  const row = await updateWhatsAppAppDeliveryStatus({ key: req.body?.key, status: req.body?.status, reason: req.body?.reason || "" });
+  res.json({ ok: true, found: Boolean(row) });
+});
+
 const whatsappProviderWebhook = asyncHandler(async (req, res) => {
   const rawBody = req.rawBody || JSON.stringify(req.body || {});
   const signature = req.get("x-whatsapp-signature") || req.get("x-hub-signature-256") || "";
@@ -159,7 +169,7 @@ const whatsappProviderWebhook = asyncHandler(async (req, res) => {
 });
 
 const settings = asyncHandler(async (req, res) => {
-  res.json({ data: { whatsapp: getWhatsAppProviderStatus(), email: { configured: Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) }, sms: { configured: false }, timezone: process.env.BILLSTACK_DEFAULT_TIMEZONE || "Asia/Kolkata" } });
+  res.json({ data: { whatsapp: getWhatsAppProviderStatus(req.tenant.businessId), email: { configured: Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) }, sms: { configured: false }, timezone: process.env.BILLSTACK_DEFAULT_TIMEZONE || "Asia/Kolkata" } });
 });
 
-module.exports = { createRule, deliveries, processDue, rules, scheduleInvoiceReminder, scheduled, sendInvoice, sendQuote, settings, summary, templates, upsertTemplate, webhookStatus, whatsappProviderWebhook };
+module.exports = { createRule, deliveries, processDue, rules, scheduleInvoiceReminder, scheduled, sendInvoice, sendQuote, settings, summary, templates, upsertTemplate, webhookStatus, whatsappAppStatusWebhook, whatsappProviderWebhook };

@@ -2,6 +2,7 @@
   // Assets (1000 - 1999)
   { code: "1010", name: "Cash on Hand", type: "ASSET", normalBalance: "DEBIT", description: "Physical cash on hand" },
   { code: "1020", name: "Bank Account", type: "ASSET", normalBalance: "DEBIT", description: "Primary operational bank account" },
+  { code: "1030", name: "Razorpay - Settlements Due", type: "ASSET", normalBalance: "DEBIT", description: "Customer payments taken online by Razorpay (less its fees) that Razorpay has not yet paid into the bank" },
   { code: "1100", name: "Accounts Receivable", type: "ASSET", normalBalance: "DEBIT", description: "Trade debtors / customer receivable balances" },
   { code: "1150", name: "Advances to Suppliers", type: "ASSET", normalBalance: "DEBIT", description: "Money paid to suppliers / landlords not yet set against a bill" },
   { code: "1160", name: "Staff Advances & Loans", type: "ASSET", normalBalance: "DEBIT", description: "Salary advances and loans to staff, recovered from their pay" },

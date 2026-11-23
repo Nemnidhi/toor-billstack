@@ -14,6 +14,7 @@ r.get("/gstr1/export", permit("owner", "admin", "accountant"), gstr1Excel);
 // Buying side and GSTR-3B (books phase 3)
 const books = permit("owner", "admin", "accountant");
 r.get("/gstr1/json", books, gstIn.gstr1Json);
+r.get("/gstr1/json/check", books, gstIn.gstr1JsonCheck);
 r.get("/itc", books, gstIn.itcRegister);
 r.post("/2b/import", books, gstIn.import2b);
 r.get("/2b/match", books, gstIn.match2b);

@@ -557,7 +557,8 @@ const gstr1Json = async ({ businessId, month }) => {
     doc_issue: data.docs.length ? { doc_det: docBlocks(data.docs) } : undefined,
   };
   for (const key of Object.keys(json)) if (json[key] === undefined || (Array.isArray(json[key]) && !json[key].length)) delete json[key];
-  return { json, fileName: `${data.gstin || "GSTIN"}_GSTR1_${m}${y}.json`, issues: data.issues };
+  const { checkGstr1Json } = require("../utils/gstr1-json-check");
+  return { json, fileName: `${data.gstin || "GSTIN"}_GSTR1_${m}${y}.json`, issues: data.issues, checks: checkGstr1Json(json) };
 };
 
 module.exports = { bookBills, gstr1Json, gstr3b, import2b, itcRegister, match2b, parse2bGrid, parse2bJson, rcmDocuments, setImsAction, setOff, amountInWords, monthOf };

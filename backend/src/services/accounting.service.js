@@ -532,7 +532,8 @@ const postInvoiceCancellationJournalEntry = async ({ invoice, userId, session })
 // Where a receipt's money is: cash, the bank, or (a set-off) the customer's own deposit with us.
 const receiptAccountCode = (method) => {
   const m = String(method || "").toUpperCase();
-  return m === "CASH" ? "1010" : m === "DEPOSIT_SET_OFF" ? "2410" : "1020";
+  // Paid online through a payment link: held by Razorpay until it settles to the bank.
+  return m === "CASH" ? "1010" : m === "DEPOSIT_SET_OFF" ? "2410" : m === "RAZORPAY" ? "1030" : "1020";
 };
 
 const postPaymentReceivedJournalEntry = async ({ payment, userId, session }) => {

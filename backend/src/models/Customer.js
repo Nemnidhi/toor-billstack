@@ -74,6 +74,15 @@ const customerSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    // The customer agreed to get invoices, reminders and receipts on WhatsApp (Meta requires it).
+    // Recorded with when and how it was given; un-ticking keeps the history of when it was withdrawn.
+    whatsappConsent: {
+      given: { type: Boolean, default: false },
+      at: { type: Date, default: null },
+      source: { type: String, trim: true, default: "", maxlength: 120 },
+      recordedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+      withdrawnAt: { type: Date, default: null },
+    },
     invoiceHistory: {
       type: [invoiceHistorySchema],
       default: [],

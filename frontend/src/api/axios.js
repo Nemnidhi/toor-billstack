@@ -7,6 +7,16 @@ const api = axios.create({
   withCredentials: true,
 });
 
+// Swaps the httpOnly refresh cookie for a new access token (used on page load and after a 401).
+export const refreshAccessToken = async (businessId) => {
+  const response = await axios.post(
+    `${api.defaults.baseURL}/auth/refresh`,
+    {},
+    { withCredentials: true, headers: businessId ? { "x-business-id": businessId } : {} }
+  );
+  return response.data.data;
+};
+
 let isRefreshing = false;
 let queuedRequests = [];
 
@@ -76,14 +86,9 @@ api.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      const response = await axios.post(
-        `${api.defaults.baseURL}/auth/refresh`,
-        {},
-        { withCredentials: true, headers: { "x-business-id": originalRequest.headers["x-business-id"] || authStore.getState().business?.id } }
-      );
-
-      const nextToken = response.data.data.accessToken;
-      authStore.getState().setSession(response.data.data);
+      const refreshed = await refreshAccessToken(originalRequest.headers["x-business-id"] || authStore.getState().business?.id);
+      const nextToken = refreshed.accessToken;
+      authStore.getState().setSession(refreshed);
 
       flushQueue(null, nextToken);
       originalRequest.headers.Authorization = `Bearer ${nextToken}`;

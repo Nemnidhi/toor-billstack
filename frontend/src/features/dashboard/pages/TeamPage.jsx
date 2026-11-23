@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, Copy, Eye, EyeOff, KeyRound, Pencil, Plus, Search, ShieldCheck, Trash2, UserCheck, UserX, Users, X } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, KeyRound, Pencil, Plus, Search, ShieldCheck, ShieldOff, Trash2, UserCheck, UserX, Users, X } from "lucide-react";
 import PageHeader from "../../../components/ui/PageHeader";
 import { ErrorState, LoadingState } from "../../../components/ui/PageState";
 import { authStore } from "../../../store/authStore";
@@ -8,6 +8,7 @@ import {
   createTeamMemberRequest,
   deleteTeamMemberRequest,
   listTeamMembersRequest,
+  resetMemberTwoFactorRequest,
   updateTeamMemberRequest,
 } from "../../auth/api";
 
@@ -111,6 +112,7 @@ const TeamPage = () => {
   const [newPassword, setNewPassword] = useState("");
   const [passwordResult, setPasswordResult] = useState(null); // { member, password } shown once after saving
   const [confirmRemove, setConfirmRemove] = useState(null);
+  const [confirmReset2fa, setConfirmReset2fa] = useState(null);
 
   const loadTeam = async () => {
     setIsLoading(true);
@@ -203,6 +205,17 @@ const TeamPage = () => {
     }
   };
 
+  const resetTwoFactor = async () => {
+    try {
+      await resetMemberTwoFactorRequest(confirmReset2fa._id || confirmReset2fa.id);
+      toast(`${confirmReset2fa.name} can sign in with the password alone now; ask them to switch two-step sign-in on again.`);
+      setConfirmReset2fa(null);
+      await loadTeam();
+    } catch (error) {
+      toast(error.response?.data?.message || "Unable to reset two-step sign-in.", "error");
+    }
+  };
+
   if (!canManageTeam) {
     return <ErrorState title="Owner or admin access required" description="Only owner and admin accounts can manage team members and roles." />;
   }
@@ -261,6 +274,7 @@ const TeamPage = () => {
                           <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${roleTone[member.role] || roleTone.staff}`}>{roleLabel[member.role] || member.role}</span>
                           {member.role === "auditor" && member.permissions?.grants?.length ? <span className="text-xs" style={{ color: "var(--text-muted)" }}>+ {member.permissions.grants.length} area{member.permissions.grants.length === 1 ? "" : "s"}</span> : null}
                           {inactive ? <span className="rounded-full bg-rose-500/10 px-2.5 py-0.5 text-xs font-semibold text-rose-700 dark:text-rose-300">Inactive</span> : null}
+                          {member.twoFactor?.enabled ? <span className="rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300">Two-step on</span> : null}
                           {locked ? <span className="rounded-full bg-amber-500/10 px-2.5 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">Locked: too many attempts</span> : null}
                         </div>
                         <p className="truncate text-sm" style={{ color: "var(--text-muted)" }}>{member.email}</p>
@@ -274,6 +288,7 @@ const TeamPage = () => {
                       <div className="flex flex-wrap gap-2 sm:justify-end">
                         <button type="button" onClick={() => openEdit(member)} className="btn-secondary"><Pencil size={15} /> Edit</button>
                         <button type="button" onClick={() => { setPasswordFor(member); setNewPassword(generatePassword()); setFormError(""); }} className="btn-secondary"><KeyRound size={15} /> {isSelf ? "Change password" : "Set new password"}</button>
+                        {!isSelf && member.twoFactor?.enabled ? <button type="button" onClick={() => setConfirmReset2fa(member)} className="btn-secondary"><ShieldOff size={15} /> Reset two-step</button> : null}
                         {!isSelf ? <button type="button" onClick={() => toggleActive(member)} className="btn-secondary">{inactive ? <><UserCheck size={15} /> Activate</> : <><UserX size={15} /> Deactivate</>}</button> : null}
                         {!isSelf ? <button type="button" onClick={() => setConfirmRemove(member)} aria-label={`Remove ${member.name}`} className="btn-danger"><Trash2 size={15} /></button> : null}
                       </div>
@@ -374,6 +389,16 @@ const TeamPage = () => {
           <div className="mt-4 flex justify-end gap-2">
             <CopyButton text={`Email: ${passwordResult.member.email}\nPassword: ${passwordResult.password}`} />
             <button type="button" onClick={() => setPasswordResult(null)} className="btn-primary">Done</button>
+          </div>
+        </Modal>
+      ) : null}
+
+      {confirmReset2fa ? (
+        <Modal title={`Reset ${confirmReset2fa.name}'s two-step sign-in?`} onClose={() => setConfirmReset2fa(null)} width="max-w-md">
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>Only for someone who lost their phone and their recovery codes. Check it's really them first (call them). Their password alone will sign them in until they switch two-step on again from Sign-in security.</p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button type="button" onClick={() => setConfirmReset2fa(null)} className="btn-secondary">Cancel</button>
+            <button type="button" onClick={resetTwoFactor} className="btn-primary"><ShieldOff size={16} /> Reset</button>
           </div>
         </Modal>
       ) : null}

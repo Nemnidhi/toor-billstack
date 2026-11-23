@@ -16,7 +16,81 @@ const AppError = require("../utils/appError");
 const { log } = require("../utils/logger");
 const { sendEmail } = require("./email.service");
 const { applyFinancialRead } = require("./financial-read.service");
-const { getWhatsAppProviderStatus, sendWhatsAppMessage } = require("./whatsapp-provider.service");
+const { getWhatsAppProviderStatus: legacyWhatsAppStatus, sendWhatsAppMessage } = require("./whatsapp-provider.service");
+const { sendThroughWhatsAppApp, whatsappAppConfig, whatsappAppServes } = require("./whatsapp-app.service");
+
+// WhatsApp goes through the company's WhatsApp app when it is linked (WHATSAPP_APP_URL / _SECRET):
+// one number, Meta-approved templates, the customer's chat. Otherwise the older direct provider.
+const getWhatsAppProviderStatus = (businessId = null) => {
+  if (whatsappAppConfig()) {
+    const serves = businessId ? whatsappAppServes(businessId) : true;
+    return { configured: serves, provider: "WHATSAPP_APP", accountId: "", webhookConfigured: true, sendingEnabled: serves, whatsappApp: true, servesThisBusiness: serves };
+  }
+  return { ...legacyWhatsAppStatus(), whatsappApp: false };
+};
+
+// Which WhatsApp-app message a template category is. Others (quotes, credit notes) are not sent there.
+const APP_PURPOSE_FOR_CATEGORY = {
+  INVOICE_CREATED: "invoice_sent",
+  INVOICE_DUE_SOON: "payment_reminder",
+  DUE_TODAY: "payment_reminder",
+  PAYMENT_OVERDUE: "payment_reminder",
+  PAYMENT_REMINDER: "payment_reminder",
+  PAYMENT_RECEIVED: "payment_received",
+};
+const NO_CONSENT_REASON = "The customer has not agreed to WhatsApp messages (tick it on the customer).";
+const rupees = (value) => Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const daysPast = (date) => {
+  if (!date) return 0;
+  const due = new Date(date);
+  due.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.max(0, Math.round((today - due) / 86400000));
+};
+
+/** The WhatsApp app's purpose and values for one message, or null when it has none. */
+const appMessageFor = ({ category, invoice, customer, business, payment = {}, paymentLink = "" }) => {
+  const purpose = APP_PURPOSE_FOR_CATEGORY[normalizeTemplateCategory(category)];
+  if (!purpose) return null;
+  const base = {
+    name: customer?.name || invoice?.customerDetails?.name || "",
+    company: business?.name || invoice?.businessDetails?.name || "",
+    invoice_number: invoice?.invoiceNumber || "",
+  };
+  if (purpose === "invoice_sent") return { purpose, variables: { ...base, amount: rupees(invoice?.grandTotal), due_date: formatDate(invoice?.dueDate), link: paymentLink } };
+  if (purpose === "payment_reminder") return { purpose, variables: { ...base, amount: rupees(invoice?.balanceDue), due_date: formatDate(invoice?.dueDate), days_overdue: String(daysPast(invoice?.dueDate)), link: paymentLink } };
+  return { purpose, variables: { ...base, amount: rupees(payment.amount), date: formatDate(payment.paymentDate || new Date()), balance: rupees(invoice?.balanceDue) } };
+};
+
+const hasWhatsAppConsent = (customer) => Boolean(customer?.whatsappConsent?.given);
+const consentOut = (customer) => {
+  const consent = customer?.whatsappConsent;
+  if (!consent?.given) return undefined;
+  return { given: true, ...(consent.at ? { at: new Date(consent.at).toISOString() } : {}), source: String(consent.source || "recorded in BillStack").slice(0, 80) };
+};
+
+/**
+ * For a WhatsApp message through the app: { app } with its purpose, values and the customer's
+ * agreement, or { skip } with the reason it cannot go. Null when WhatsApp goes the older way.
+ */
+const appPlanFor = ({ businessId, channel, category, invoice, customer, business, payment, paymentLink }) => {
+  if (channel !== "WHATSAPP" || !getWhatsAppProviderStatus(businessId).whatsappApp) return null;
+  if (!hasWhatsAppConsent(customer)) return { skip: NO_CONSENT_REASON };
+  const message = appMessageFor({ category, invoice, customer, business, payment, paymentLink });
+  if (!message) return { skip: `The WhatsApp app has no message for ${normalizeTemplateCategory(category)} (only invoice, payment reminder and payment received).` };
+  return { app: { ...message, consent: consentOut(customer) } };
+};
+
+// A payment link for the invoice's unpaid amount, when the business takes payments online. Never
+// stops a message: without one the message goes without a link.
+const paymentLinkFor = async ({ businessId, invoice, category }) => {
+  const purpose = APP_PURPOSE_FOR_CATEGORY[normalizeTemplateCategory(category)];
+  if (purpose === "payment_received" || Number(invoice?.balanceDue || 0) <= 0) return "";
+  const { ensureInvoiceLink } = require("./online-payment.service");
+  const link = await ensureInvoiceLink({ businessId, invoiceId: invoice._id, quiet: true });
+  return link?.url || "";
+};
 
 const CHANNELS = ["WHATSAPP", "EMAIL", "SMS", "IN_APP"];
 const REMINDER_TYPES = ["BEFORE_DUE_DATE", "ON_DUE_DATE", "AFTER_DUE_DATE", "RECURRING_OVERDUE"];
@@ -331,7 +405,7 @@ const ensureDefaultTemplates = async ({ businessId, createdBy, session }) => {
 
 const getInvoiceContext = async ({ businessId, invoiceId, session }) => {
   const [invoice, business] = await Promise.all([
-    Invoice.findOne({ _id: invoiceId, businessId }).populate("customerId", "name email phone").session(session),
+    Invoice.findOne({ _id: invoiceId, businessId }).populate("customerId", "name email phone whatsappConsent").session(session),
     Business.findOne({ _id: businessId }).select("name email billingEmail phone").session(session),
   ]);
   if (!invoice) throw new AppError("Invoice not found", 404);
@@ -352,7 +426,7 @@ const getQuoteContext = async ({ businessId, quoteId, session }) => {
 const formatAmount = (value) => Number(value || 0).toFixed(2);
 const formatDate = (value) => (value ? new Date(value).toLocaleDateString("en-IN") : "");
 
-const buildVariables = ({ businessName = "BillStack", business, invoice, customer, payment = {}, creditNote = {}, salesReturn = {}, quote = {} }) => ({
+const buildVariables = ({ businessName = "BillStack", business, invoice, customer, payment = {}, creditNote = {}, salesReturn = {}, quote = {}, paymentLink = "" }) => ({
   customer_name: customer?.name || invoice?.customerDetails?.name || "Customer",
   invoice_number: invoice?.invoiceNumber || "",
   invoice_amount: formatAmount(invoice?.grandTotal),
@@ -361,7 +435,7 @@ const buildVariables = ({ businessName = "BillStack", business, invoice, custome
   business_name: business?.name || invoice?.businessDetails?.name || businessName,
   business_phone: business?.phone || invoice?.businessDetails?.phone || "",
   business_email: business?.email || business?.billingEmail || invoice?.businessDetails?.email || "",
-  payment_link: "",
+  payment_link: paymentLink,
   payment_amount: payment.amount !== undefined ? formatAmount(payment.amount) : formatAmount(invoice?.amountPaid || invoice?.grandTotal - invoice?.balanceDue || 0),
   payment_date: formatDate(payment.paymentDate),
   payment_reference: payment.referenceNumber || payment.reference || "",
@@ -404,7 +478,7 @@ const createDelivery = async ({ businessId, customerId, invoiceId, paymentId = n
         reminderJobId,
         status,
         failureReason,
-        provider: channel === "WHATSAPP" ? getWhatsAppProviderStatus().provider : channel,
+        provider: channel === "WHATSAPP" ? getWhatsAppProviderStatus(businessId).provider : channel,
         usageTimestamp: ["SENT", "DELIVERED", "READ"].includes(status) ? new Date() : null,
         metadata,
         createdBy,
@@ -439,7 +513,33 @@ const scheduleWorkflowMessage = async ({ businessId, customerId = null, channel 
 const dispatchDelivery = async ({ delivery, session }) => {
   if (delivery.status === "SENT") return delivery;
   try {
-    if (delivery.channel === "WHATSAPP") {
+    if (delivery.channel === "WHATSAPP" && delivery.provider === "WHATSAPP_APP") {
+      const app = delivery.metadata?.app;
+      if (!app?.purpose) throw new AppError("Only invoice, payment-reminder and payment-received messages go through the WhatsApp app", 400);
+      // A new key only after the app gave a final answer (skipped / failed), so a retry after a lost
+      // answer is not sent twice.
+      const attempt = Number(delivery.metadata?.appAttempt || 1);
+      const key = `bs-${delivery._id}-${attempt}`;
+      const result = await sendThroughWhatsAppApp({
+        key,
+        to: delivery.recipient,
+        purpose: app.purpose,
+        variables: app.variables || {},
+        consent: app.consent || undefined,
+        ref: { type: delivery.invoiceId ? "invoice" : "message", id: String(delivery.invoiceId || delivery._id) },
+      });
+      delivery.providerMessageId = result.key;
+      delivery.providerReference = JSON.stringify({ appStatus: result.appStatus, key: result.key });
+      if (["SKIPPED", "FAILED", "CANCELLED"].includes(result.status)) {
+        delivery.metadata = { ...(delivery.metadata || {}), appAttempt: attempt + 1 };
+        delivery.markModified("metadata");
+        delivery.status = result.status;
+        delivery.failureReason = result.reason || "The WhatsApp app did not send it";
+        await delivery.save({ session });
+        return delivery;
+      }
+      delivery.status = result.status;
+    } else if (delivery.channel === "WHATSAPP") {
       const providerResult = await sendWhatsAppMessage({ to: delivery.recipient, body: delivery.content, sourceKey: delivery.sourceKey });
       delivery.providerMessageId = providerResult.providerMessageId || delivery.providerMessageId;
       delivery.providerReference = providerResult.providerReference ? JSON.stringify(providerResult.providerReference) : delivery.providerReference;
@@ -502,10 +602,24 @@ const sendInvoiceMessage = async ({ businessId, invoiceId, channel, category = "
   const { invoice, customer, business } = await getInvoiceContext({ businessId, invoiceId, session });
   const template = await findTemplate({ businessId, channel: normalizedChannel, category: normalizedCategory, templateId, session });
   if (!template) throw new AppError("Message template is not configured", 404);
-  const content = renderTemplate(template.body, buildVariables({ invoice, customer, business }));
+  const paymentLink = await paymentLinkFor({ businessId, invoice, category: normalizedCategory });
+  const plan = appPlanFor({ businessId, channel: normalizedChannel, category: normalizedCategory, invoice, customer, business, paymentLink });
+  if (plan?.skip) throw new AppError(plan.skip, 400);
+  const content = renderTemplate(template.body, buildVariables({ invoice, customer, business, paymentLink }));
   const recipient = normalizedChannel === "EMAIL" ? customer?.email || invoice.customerDetails?.email || "" : customer?.phone || invoice.customerDetails?.phone || "";
+  if (!recipient) throw new AppError(`Customer ${normalizedChannel === "EMAIL" ? "email" : "phone"} is required to send this`, 400);
   const sourceKey = `SEND:${invoice._id}:${normalizedChannel}:${normalizedCategory}:${template?._id || "DEFAULT"}`;
-  const delivery = await createDelivery({ businessId, customerId: customer?._id || invoice.customerId, invoiceId: invoice._id, channel: normalizedChannel, template, content, recipient, sourceKey, createdBy, session });
+  const metadata = plan?.app ? { app: plan.app, category: normalizedCategory } : {};
+  const delivery = await createDelivery({ businessId, customerId: customer?._id || invoice.customerId, invoiceId: invoice._id, channel: normalizedChannel, template, content, recipient, sourceKey, createdBy, session, metadata });
+  // Sent again after it did not go: with the current amount, link and number.
+  if (!["SENT", "DELIVERED", "READ"].includes(delivery.status)) {
+    delivery.content = content;
+    delivery.recipient = recipient;
+    if (plan?.app) {
+      delivery.metadata = { ...(delivery.metadata || {}), ...metadata };
+      delivery.markModified("metadata");
+    }
+  }
   return dispatchDelivery({ delivery, session });
 };
 
@@ -540,9 +654,9 @@ const sendQuoteMessage = async ({ businessId, quoteId, channel, templateId, crea
   return sent;
 };
 
-const isChannelConfigured = (channel) => {
+const isChannelConfigured = (channel, businessId = null) => {
   if (channel === "EMAIL") return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
-  if (channel === "WHATSAPP") return Boolean(getWhatsAppProviderStatus().configured);
+  if (channel === "WHATSAPP") return Boolean(getWhatsAppProviderStatus(businessId).configured);
   if (channel === "SMS") return false;
   if (channel === "IN_APP") return true;
   return false;
@@ -576,15 +690,21 @@ const createSkippedAutomationDelivery = ({ businessId, customerId, invoiceId, pa
 const dispatchAutomationDelivery = async ({ businessId, invoice, customer, business, rule, template, payment = {}, allocation = null, eventType, sourceKey, createdBy, session }) => {
   const channel = rule.channels?.[0] || "EMAIL";
   const metadata = { eventType, ruleId: rule._id, condition: rule.condition || "ANY_PAYMENT" };
-  if (!isChannelConfigured(channel)) {
+  if (!isChannelConfigured(channel, businessId)) {
     return createSkippedAutomationDelivery({ businessId, customerId: customer?._id || invoice.customerId, invoiceId: invoice._id, paymentId: payment?._id || null, channel, template, sourceKey, reason: `${channel} provider is not configured`, createdBy, session, metadata });
   }
   const recipient = recipientForChannel({ channel, customer, invoice });
   if (!recipient) {
     return createSkippedAutomationDelivery({ businessId, customerId: customer?._id || invoice.customerId, invoiceId: invoice._id, paymentId: payment?._id || null, channel, template, sourceKey, reason: `Recipient is missing for ${channel}`, createdBy, session, metadata });
   }
-  const content = renderTemplate(template.body, buildVariables({ invoice, customer, business, payment }));
-  const delivery = await createDelivery({ businessId, customerId: customer?._id || invoice.customerId, invoiceId: invoice._id, paymentId: payment?._id || null, channel, template, content, recipient, sourceKey, createdBy, session, metadata: { ...metadata, allocationId: allocation?._id || null } });
+  const category = template?.category || rule.category || (eventType === "PAYMENT_RECORDED" ? "PAYMENT_RECEIVED" : "INVOICE_CREATED");
+  const paymentLink = await paymentLinkFor({ businessId, invoice, category });
+  const plan = appPlanFor({ businessId, channel, category, invoice, customer, business, payment, paymentLink });
+  if (plan?.skip) {
+    return createSkippedAutomationDelivery({ businessId, customerId: customer?._id || invoice.customerId, invoiceId: invoice._id, paymentId: payment?._id || null, channel, template, sourceKey, reason: plan.skip, createdBy, session, metadata });
+  }
+  const content = renderTemplate(template.body, buildVariables({ invoice, customer, business, payment, paymentLink }));
+  const delivery = await createDelivery({ businessId, customerId: customer?._id || invoice.customerId, invoiceId: invoice._id, paymentId: payment?._id || null, channel, template, content, recipient, sourceKey, createdBy, session, metadata: { ...metadata, allocationId: allocation?._id || null, ...(plan?.app ? { app: plan.app, category } : {}) } });
   if (delivery.status !== "QUEUED") return delivery;
   return dispatchDelivery({ delivery, session });
 };
@@ -649,15 +769,27 @@ const processDueReminder = async ({ reminder, session }) => {
   const template = await findTemplate({ businessId: reminder.businessId, channel: reminder.channel, category, templateId: reminder.templateId || rule?.templateId, session });
   if (!template) throw new AppError("Message template is not configured", 404);
   reminder.outstandingAmountSnapshot = invoice.balanceDue;
-  const content = renderTemplate(template.body, buildVariables({ invoice, customer, business }));
+  const paymentLink = await paymentLinkFor({ businessId: reminder.businessId, invoice, category });
+  const plan = appPlanFor({ businessId: reminder.businessId, channel: reminder.channel, category, invoice, customer, business, paymentLink });
+  if (plan?.skip) {
+    // Not something a retry fixes (the customer's agreement, a message the app does not send).
+    reminder.status = "SKIPPED";
+    reminder.failureReason = plan.skip;
+    reminder.cancellationReason = plan.skip;
+    reminder.lockedAt = null;
+    reminder.lockedBy = "";
+    await reminder.save({ session });
+    return reminder;
+  }
+  const content = renderTemplate(template.body, buildVariables({ invoice, customer, business, paymentLink }));
   const recipient = reminder.channel === "EMAIL" ? customer?.email || invoice.customerDetails?.email || "" : customer?.phone || invoice.customerDetails?.phone || "";
-  const delivery = await createDelivery({ businessId: reminder.businessId, customerId: customer?._id || invoice.customerId, invoiceId: invoice._id, channel: reminder.channel, template, content, recipient, sourceKey: `REMINDER_DELIVERY:${reminder._id}`, status: "QUEUED", reminderJobId: reminder._id, createdBy: reminder.createdBy, session });
+  const delivery = await createDelivery({ businessId: reminder.businessId, customerId: customer?._id || invoice.customerId, invoiceId: invoice._id, channel: reminder.channel, template, content, recipient, sourceKey: `REMINDER_DELIVERY:${reminder._id}`, status: "QUEUED", reminderJobId: reminder._id, createdBy: reminder.createdBy, session, metadata: plan?.app ? { app: plan.app, category } : {} });
   const sent = await dispatchDelivery({ delivery, session });
-  reminder.status = sent.status === "SENT" ? "SENT" : "FAILED";
+  reminder.status = ["SENT", "DELIVERED", "READ"].includes(sent.status) ? "SENT" : sent.status === "SKIPPED" ? "SKIPPED" : "FAILED";
   reminder.sentAt = sent.sentAt;
   reminder.failureReason = sent.failureReason;
-  reminder.retryCount += sent.status === "FAILED" ? 1 : 0;
-  reminder.nextRetryAt = sent.status === "FAILED" ? nextRetryAfterFailure(reminder.retryCount) : null;
+  reminder.retryCount += reminder.status === "FAILED" ? 1 : 0;
+  reminder.nextRetryAt = reminder.status === "FAILED" ? nextRetryAfterFailure(reminder.retryCount) : null;
   reminder.lockedAt = null;
   reminder.lockedBy = "";
   await reminder.save({ session });
@@ -872,6 +1004,26 @@ const updateDeliveryStatus = async ({ businessId, providerMessageId, status, fai
   return row;
 };
 
+// The WhatsApp app's report on a message it was asked to send (key = providerMessageId). Moves
+// forward only: a late "delivered" never undoes "read".
+const DELIVERY_ORDER = ["QUEUED", "SCHEDULED", "PROCESSING", "SENT", "DELIVERED", "READ"];
+const updateWhatsAppAppDeliveryStatus = async ({ key, status, reason = "" }) => {
+  const { APP_STATUS } = require("./whatsapp-app.service");
+  const mapped = APP_STATUS[String(status || "").toLowerCase()];
+  if (!mapped) throw new AppError("Unknown status", 400);
+  const row = await MessageDelivery.findOne({ provider: "WHATSAPP_APP", providerMessageId: String(key || "") });
+  if (!row) return null;
+  if (row.status === "READ") return row;
+  const terminal = ["FAILED", "SKIPPED", "CANCELLED"];
+  if (!terminal.includes(mapped) && DELIVERY_ORDER.indexOf(mapped) <= DELIVERY_ORDER.indexOf(row.status)) return row;
+  row.status = mapped;
+  row.failureReason = terminal.includes(mapped) ? String(reason || "").slice(0, 300) : "";
+  if (mapped === "DELIVERED") row.deliveredAt = new Date();
+  if (mapped === "READ") row.readAt = new Date();
+  await row.save();
+  return row;
+};
+
 const updateProviderDeliveryStatus = async ({ providerMessageId, status, failureReason = "" }) => {
   if (!DELIVERY_STATES.includes(status)) throw new AppError("Invalid delivery status", 400);
   const row = await MessageDelivery.findOne({ providerMessageId });
@@ -909,5 +1061,6 @@ module.exports = {
   sendQuoteMessage,
   updateDeliveryStatus,
   updateProviderDeliveryStatus,
+  updateWhatsAppAppDeliveryStatus,
   validateTemplateVariables,
 };

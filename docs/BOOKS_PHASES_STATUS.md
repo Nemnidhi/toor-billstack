@@ -132,6 +132,92 @@ businesses index change above runs itself at start-up; nginx `client_max_body_si
 and statement uploads). CRM (branch feat/payroll, worktree changes): set `BILLSTACK_GOLDHAWK_API_KEY`
 in its environment; no migration (old runs count as TOOR's).
 
+### Built after the answers (23 Nov 2026, evening; same branch, not deployed)
+
+- **WhatsApp through the company's WhatsApp app.**
+  - With `WHATSAPP_APP_URL` and `WHATSAPP_APP_SECRET` set, BillStack's WhatsApp messages go through
+    the oor-whatsapp app: one number, Meta-approved templates, the customer's chat. This covers
+    invoice issued, reminders by due date, and payment received, both from the Communications rules
+    and from the invoice page.
+  - Calls are signed (caller "billstack"). Status comes back signed to
+    `/api/communications/webhooks/whatsapp-app/status` and only moves forward.
+  - A message goes only to a customer ticked **"Agreed to WhatsApp messages"**. The tick records when,
+    how and by whom. Otherwise the message is skipped with the reason; a reminder is skipped, not retried.
+  - Quotes and credit notes do not go through the app.
+- **Customer payment links (Razorpay, the company's own account).**
+  - Settings > Invoice & Payment > Online payments: key ID, key secret and webhook secret. The secrets
+    are encrypted with `BILLSTACK_DATA_KEY` and never shown again; the keys are checked with Razorpay
+    when the feature is switched on.
+  - One open link per invoice, for what is due. It is made when the invoice or a reminder goes out
+    (WhatsApp / email `{{payment_link}}`) or from the invoice page. A changed amount replaces the link.
+  - Webhook: `/api/online-payments/webhooks/razorpay/<business id>`, events `payment_link.paid` and
+    `settlement.processed`. A paid link is recorded once:
+    - the payment ("RAZORPAY", by Razorpay's payment id), allocated to the invoice;
+    - Dr 1030 Razorpay - Settlements Due;
+    - Razorpay's fee Dr 5140 Bank Charges / Cr 1030.
+  - A settlement posts Dr 1020 / Cr 1030 with the UTR, so the bank line matches it exactly.
+  - Paid while the books are closed for that day: the invoice shows "Paid online but not recorded"
+    with "Record it now".
+- **GSTR-1 JSON checked against the portal's upload rules** (`utils/gstr1-json-check.js`), before each
+  download (Reports > GSTR-1, list on the page). It checks:
+  - formats and lengths, dd-mm-yyyy dates in the period, numbers used twice;
+  - rates (incl. 40%), IGST vs CGST + SGST by place of supply, tax within Rs 1 of rate x value;
+  - B2CL above Rs 1 lakh inter-state only, B2CS rows;
+  - Table 12 split B2B / B2C with the B2B tab filled, SAC unit NA, 4 / 6 digit codes, Table 12
+    tying to the invoice tables;
+  - Table 13 present.
+
+  GSTN publishes no formal JSON schema, so the last check is still the offline tool (D9).
+
+  Today's export passes it (tests/books-phase3-gst.test.js).
+- **Not built: live bank feeds.** These need an RBI account-aggregator partner (e.g. Setu, Finvu,
+  OneMoney) under a contract the company signs, and each bank's consent flow. Statement import (Excel
+  / CSV / PDF) stays the way in.
+- Tests:
+  - `tests/whatsapp-app-and-payment-links.test.js` (DB, 7);
+  - `tests/gstr1-json-check.test.js` (4);
+  - in the WhatsApp app, integrations.e2e has a BillStack test (76 pass).
+
+### Audit fixes (23 Nov 2026, night; same branch, not deployed)
+
+From the four-system audit (OOR_Four_System_Audit_23Nov2026.pdf).
+
+- **Most receipts are bank transfer or cash; Razorpay is the exception.** Record payment already covers
+  them: cash to 1010, bank transfer / UPI / cheque / card to 1020, TDS deducted, UTR, part payments,
+  advances, and the bank statement import matching by UTR or amount and date. New: method
+  **"Razorpay (online, settles later)"** for a Razorpay payment taken outside a BillStack link. It
+  goes to 1030 like a link payment, so the settlement can clear it (before, it had no method and would
+  have been booked to the bank twice).
+- **Razorpay settlements (BS-02).** `settlement.processed` reads Razorpay's settlement recon for the
+  day. It posts Dr 1020 / Cr 1030 only when every line is a payment BillStack recorded and the lines
+  add up to the settlement. Otherwise it waits in Settings > Online payments > Settlements as "Needs
+  review" with the unknown lines. The accountant records them (method Razorpay) and posts, or marks
+  it recorded by hand.
+- **Razorpay refunds (BS-02).** `refund.processed` puts an amber box on the invoice. Choose "Reverse
+  the payment" (full refunds: allocations and payment reversed, the invoice is due again) or "I
+  recorded it myself".
+- **Webhook events are claimed once (BS-03).** Two copies of the same event arriving together record
+  one payment. A failed event is marked FAILED and Razorpay retries it.
+- **Signatures compared in constant time (BS-04)**, and the internal WhatsApp status route needs owner
+  / admin (BS-05).
+- **Reprinted invoices keep the seller as issued (BS-06).** The PDF used the company's current
+  profile; it now uses the invoice's seller snapshot (name, GSTIN, address, logo, signature).
+  `tests/multi-billing-entity.test.js` is in `npm test`.
+- **Two-step sign-in (BS-01).**
+  - Each user can switch it on: user menu > Sign-in security, using an authenticator app. Ten one-time
+    recovery codes are shown once.
+  - Sign-in (password or Google) then asks for the 6-digit code. Each code works once, and five
+    wrong codes pause it for 15 minutes.
+  - Switching it off needs a code. An owner / admin can reset someone else's from Team; only an owner
+    can reset an owner's.
+  - The secret is encrypted with `BILLSTACK_DATA_KEY`.
+  - Super admin: set `SUPER_ADMIN_TOTP_SECRET` (make one with `node scripts/make-totp-secret.js`) and
+    the super-admin login asks for the code.
+- **The access token is no longer saved in the browser.** Only who is signed in is kept. A page load
+  gets a fresh token from the httpOnly refresh cookie.
+- Tests: `tests/two-factor.test.js` (DB, 3); the payment-links file adds concurrent events, a mixed
+  settlement and a refund.
+
 ## Pending decisions (owner / client / CA) - nothing below blocks the build
 
 | # | Decision | Built default until decided |
@@ -161,6 +247,10 @@ in its environment; no migration (old runs count as TOOR's).
 | D19 | RBI bank rate for MSMED interest (3 times it, monthly rests) | 5.5%, editable on the report |
 | D20 | Tally: version (TallyPrime or ERP 9), and the company name in Tally (the export uses the BillStack company name); party ledgers vs control accounts | both versions' XML; party ledgers for customers / suppliers |
 | D21 | Old fixed assets: enter them as "Owned before (opening)" (posts cost / depreciation to date against capital 3010). If they are already in the opening balances, enter them as opening with care so they are not counted twice | none entered |
+| D27 | Razorpay fee GST: the fee with its GST goes to 5140 Bank Charges. If the company claims the GST on Razorpay's fee as input credit (Razorpay's monthly tax invoice), the CA moves the GST part to input IGST from that invoice | all to 5140 |
+| D28 | Which companies send WhatsApp from the OOR number (WHATSAPP_APP_BUSINESS_IDS), and whether Goldhawk's customers get them from it too | all businesses |
+| D29 | WhatsApp templates 5-7 (invoice, reminder, received) in the WhatsApp app's docs/META_TEMPLATES.md: owner submits to Meta; Meta may refuse the link inside the text | drafted, not submitted |
+| D30 | Is the company's Razorpay account used only for BillStack payment links? If payments also come from elsewhere (website, POS), record them with method "Razorpay" so settlements post themselves | either way works: unknown lines wait for review |
 | D6 | TDS on purchase bills (goods / contract work entered as Purchases, not Expenses) | not built: TDS is on expense bills only; the limit watch covers expense bills |
 
 ## Verification checklist (before deploy)
@@ -170,6 +260,20 @@ in its environment; no migration (old runs count as TOOR's).
 - Bank: import one real statement of each bank in Excel and in PDF; check the balance check says all rows agree and the automatic matches.
 - Deposits: on a test tenant, pay one invoice from the deposit and undo it; check Accounting > Bank & Cash Book shows no bank movement.
 
+- WhatsApp app: on the server set `WHATSAPP_APP_URL`, `WHATSAPP_APP_SECRET` (the same secret as the
+  app's `BILLSTACK_SHARED_SECRET`) and `BILLSTACK_DATA_KEY` (64 hex), all at hidden prompts.
+  - Tick "Agreed to WhatsApp messages" on one test customer.
+  - From an invoice, use Send invoice: check it arrives on the Meta test number and the invoice's
+    message log turns Delivered / Read.
+- Payment links: in Razorpay **test mode** first.
+  - Enter the test keys and webhook secret in Settings > Invoice & Payment > Online payments.
+  - Add the webhook in Razorpay with the URL shown, for payment_link.paid, refund.processed and
+    settlement.processed.
+  - Pay a test link: the invoice turns paid, 1030 holds the amount less the fee, 5140 the fee.
+  - Then switch to the live keys.
+- Two-step sign-in: owner switches it on first (Sign-in security) and keeps the recovery codes
+  offline; then each admin / accountant. Super admin: `node scripts/make-totp-secret.js` on the
+  server, add the key to the app, put SUPER_ADMIN_TOTP_SECRET in .env (hidden prompt), restart.
 - Full server suite (`npm test`), every DB test with TEST_MONGO_URI, client build + tests.
 - After deploy: Accounting > Historical Backfill (dry run, then execute).
 - GST in: enter the supplier's bill number on bills with GST (needed to match GSTR-2B); Reports > GSTR-3B & input; mark rent from unregistered landlords as Reverse charge.

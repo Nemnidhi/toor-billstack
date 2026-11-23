@@ -86,6 +86,18 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // Two-step sign-in with an authenticator app. The secret is sealed with BILLSTACK_DATA_KEY and
+    // never leaves the server after setup; recovery codes are kept only as hashes.
+    twoFactor: {
+      enabled: { type: Boolean, default: false },
+      secretSealed: { type: String, default: "", select: false },
+      pendingSecretSealed: { type: String, default: "", select: false },
+      recoveryCodeHashes: { type: [String], default: [], select: false },
+      lastStep: { type: Number, default: -1, select: false },
+      failedAttempts: { type: Number, default: 0 },
+      lockedUntil: { type: Date, default: null },
+      enabledAt: { type: Date, default: null },
+    },
     lastLoginAt: {
       type: Date,
       default: null,

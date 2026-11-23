@@ -20,6 +20,7 @@ import {
   verifyModuleRazorpayPaymentRequest,
 } from "../../auth/api";
 import { authStore } from "../../../store/authStore";
+import OnlinePaymentsSettings from "./OnlinePaymentsSettings";
 import { isRealEstateSelfHostedWorkspace, shouldShowCommercialSettings, settingsVisibility } from "../../workspace/workspaceVisibility";
 
 const getApiOrigin = () => {
@@ -409,6 +410,7 @@ const BusinessSettingsPage = () => {
           {saved && <p role="status" className="mt-4 text-sm text-emerald-600">Saved successfully</p>}
           <button type="submit" disabled={isSaving} className="mt-4 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{isSaving ? "Saving..." : "Save changes"}</button>
         </form>}
+        {section === "Invoice & Payment" && ["owner", "admin", "accountant"].includes(user?.role) ? <OnlinePaymentsSettings canEdit={["owner", "admin"].includes(user?.role)} /> : null}
         <div className={section === "Communications" ? "space-y-4" : "hidden"}>
           <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
             <p className="text-sm font-semibold text-white">Communication providers</p>

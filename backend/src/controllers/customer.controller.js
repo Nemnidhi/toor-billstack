@@ -107,8 +107,21 @@ const getCustomerById = asyncHandler(async (req, res) => {
 
 const { normalizePan, normalizeTan, normalizeTdsKind } = require("../utils/tax-ids");
 
+// The WhatsApp agreement as the form sends it: { given, source }. Answers the new value, or undefined
+// when the form did not touch it.
+const consentFromBody = (body, current, userId) => {
+  const input = body?.whatsappConsent;
+  if (input === undefined || input === null) return undefined;
+  const given = input === true || input?.given === true;
+  const was = Boolean(current?.given);
+  if (given === was) return current ? undefined : { given: false };
+  if (given) return { given: true, at: new Date(), source: String(input?.source || "recorded in BillStack").trim().slice(0, 120), recordedBy: userId || null, withdrawnAt: null };
+  return { ...(current?.toObject ? current.toObject() : current || {}), given: false, withdrawnAt: new Date() };
+};
+
 const createCustomer = asyncHandler(async (req, res) => {
   const gst = normalizeCustomerGst(req.body);
+  const consent = consentFromBody(req.body, null, req.user?._id || req.user?.id);
   const customer = await Customer.create({
     businessId: req.tenant.businessId,
     name: req.body.name.trim(),
@@ -122,6 +135,7 @@ const createCustomer = asyncHandler(async (req, res) => {
     pan: normalizePan(req.body.pan),
     tan: normalizeTan(req.body.tan),
     notes: req.body.notes?.trim() || "",
+    ...(consent ? { whatsappConsent: consent } : {}),
     invoiceHistory: Array.isArray(req.body.invoiceHistory) ? req.body.invoiceHistory : [],
   });
 
@@ -161,6 +175,8 @@ const updateCustomer = asyncHandler(async (req, res) => {
   if (req.body.pan !== undefined) customer.pan = normalizePan(req.body.pan);
   if (req.body.tan !== undefined) customer.tan = normalizeTan(req.body.tan);
   customer.notes = req.body.notes?.trim() || "";
+  const consent = consentFromBody(req.body, customer.whatsappConsent, req.user?._id || req.user?.id);
+  if (consent) customer.whatsappConsent = consent;
 
   if (Array.isArray(req.body.invoiceHistory)) {
     customer.invoiceHistory = req.body.invoiceHistory;

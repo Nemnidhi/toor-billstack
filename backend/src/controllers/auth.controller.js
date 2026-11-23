@@ -24,6 +24,7 @@ const { serializeBusinessWithPlan } = require("../utils/businessPlan");
 const { startTrialForNewBusiness } = require("../services/commercial-plan.service");
 const { getDeploymentMode, isPublicSignupOpen } = require("../constants/modules");
 const { ensureSelfHostedBusinessProfile } = require("../services/self-hosted-profile.service");
+const twoFactor = require("../services/two-factor.service");
 
 const refreshCookieName = process.env.REFRESH_COOKIE_NAME || "billstack_refresh_token";
 
@@ -169,6 +170,11 @@ const login = asyncHandler(async (req, res) => {
   // Reset lockout state on successful login
   user.failedLoginAttempts = 0;
   user.lockedUntil = null;
+  if (user.twoFactor?.enabled) {
+    // The password was right; the session waits for the authenticator code (POST /auth/login/2fa).
+    await user.save();
+    return res.status(200).json({ message: "Enter the code from your authenticator app", data: { twoFactorRequired: true, challengeToken: twoFactor.issueChallenge(user, "password") } });
+  }
   user.lastLoginAt = new Date();
   await user.save();
   business = await ensureSelfHostedBusinessProfile(business);
@@ -240,6 +246,9 @@ const googleAuth = asyncHandler(async (req, res) => {
     user.googleLinkedAt = user.googleLinkedAt || new Date();
     user.authProvider = user.password ? "password_google" : "google";
     await user.save();
+    if (user.twoFactor?.enabled) {
+      return res.status(200).json({ message: "Enter the code from your authenticator app", data: { twoFactorRequired: true, challengeToken: twoFactor.issueChallenge(user, "google") } });
+    }
   }
 
   const accessToken = signAccessToken(user);
@@ -254,6 +263,42 @@ const googleAuth = asyncHandler(async (req, res) => {
     message: mode === "signup" && !users.length ? "Google registration successful" : "Google login successful",
     data: await buildAuthPayload({ user, business, accessToken }),
   });
+});
+
+// Second step of sign-in for a user with two-step on: the challenge from the first step and a code.
+const loginTwoFactor = asyncHandler(async (req, res) => {
+  const { user, method, usedRecovery, recoveryLeft } = await twoFactor.completeChallenge({ challengeToken: req.body?.challengeToken, code: req.body?.code });
+  let business = await Business.findById(user.businessId);
+  if (!business) throw new AppError("Invalid credentials", 401);
+  user.lastLoginAt = new Date();
+  await user.save();
+  business = await ensureSelfHostedBusinessProfile(business);
+  const accessToken = signAccessToken(user);
+  const refreshToken = await issueRefreshToken(user, { ipAddress: req.ip, userAgent: req.get("user-agent") });
+  res.cookie(refreshCookieName, refreshToken, refreshCookieOptions);
+  await writeAuditLog({ req, businessId: business._id, actor: { type: "USER", userId: user._id, email: user.email, role: user.role }, action: method === "google" ? "GOOGLE_USER_LOGIN" : "USER_LOGIN", entityType: "USER", entityId: user._id, metadata: { authProvider: user.authProvider, twoFactor: usedRecovery ? "recovery_code" : "authenticator" } });
+  res.status(200).json({
+    message: usedRecovery ? `Signed in with a recovery code; ${recoveryLeft} left` : "Login successful",
+    data: { ...(await buildAuthPayload({ user, business, accessToken })), recoveryLeft: usedRecovery ? recoveryLeft : undefined },
+  });
+});
+
+// Two-step sign-in settings for the signed-in user.
+const twoFactorStatus = asyncHandler(async (req, res) => {
+  res.json({ data: await twoFactor.status(req.user._id) });
+});
+const twoFactorSetup = asyncHandler(async (req, res) => {
+  res.json({ data: await twoFactor.startSetup(req.user._id) });
+});
+const twoFactorEnable = asyncHandler(async (req, res) => {
+  const data = await twoFactor.confirmSetup(req.user._id, req.body?.code);
+  await writeAuditLog({ req, businessId: req.user.businessId, actor: { type: "USER", userId: req.user._id, email: req.user.email, role: req.user.role }, action: "TWO_FACTOR_ENABLED", entityType: "USER", entityId: req.user._id, metadata: {} });
+  res.json({ data });
+});
+const twoFactorDisable = asyncHandler(async (req, res) => {
+  const data = await twoFactor.disable(req.user._id, req.body?.code);
+  await writeAuditLog({ req, businessId: req.user.businessId, actor: { type: "USER", userId: req.user._id, email: req.user.email, role: req.user.role }, action: "TWO_FACTOR_DISABLED", entityType: "USER", entityId: req.user._id, metadata: {} });
+  res.json({ data });
 });
 
 const forgotPassword = asyncHandler(async (req, res) => {
@@ -420,6 +465,11 @@ module.exports = {
   forgotPassword,
   getMe,
   login,
+  loginTwoFactor,
+  twoFactorDisable,
+  twoFactorEnable,
+  twoFactorSetup,
+  twoFactorStatus,
   googleAuth,
   logout,
   refresh,

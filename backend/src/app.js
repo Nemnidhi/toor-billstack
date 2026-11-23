@@ -129,6 +129,7 @@ app.use("/api/business", businessRoutes);
 app.use("/api/billing", billingRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/communications", communicationRoutes);
+app.use("/api/online-payments", require("./routes/online-payment.routes"));
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/plans", planRoutes);
   app.use("/api/payments", paymentRoutes);
